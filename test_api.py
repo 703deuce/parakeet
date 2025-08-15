@@ -39,11 +39,11 @@ def test_transcription(api_endpoint, audio_file_path, include_timestamps=False, 
     if not audio_data:
         return None
     
-    # Prepare request payload
+    # Prepare request payload (exactly matching handler.py expected format)
     payload = {
         "input": {
             "audio_data": audio_data,
-            "audio_format": file_ext or "wav",
+            "audio_format": file_ext or "wav", 
             "include_timestamps": include_timestamps,
             "chunk_duration": chunk_duration
         }
@@ -54,11 +54,30 @@ def test_transcription(api_endpoint, audio_file_path, include_timestamps=False, 
     print(f"Chunk duration: {chunk_duration} seconds")
     
     try:
+        # Get API key from environment
+        api_key = os.getenv('RUNPOD_API_KEY')
+        if not api_key:
+            print("Error: RUNPOD_API_KEY environment variable not set")
+            return None
+        
+        # Set headers with API key
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        
         # Send request
-        response = requests.post(api_endpoint, json=payload, timeout=300)  # 5 minute timeout
+        print(f"Payload size: {len(str(payload))} characters")
+        print(f"Audio data size: {len(audio_data)} characters")
+        
+        response = requests.post(api_endpoint, json=payload, headers=headers, timeout=300)  # 5 minute timeout
+        
+        print(f"Response status: {response.status_code}")
+        print(f"Response headers: {dict(response.headers)}")
         
         if response.status_code == 200:
             result = response.json()
+            print(f"Response body: {result}")
             return result
         else:
             print(f"Error: {response.status_code}")
@@ -127,6 +146,11 @@ def main():
     if not api_endpoint:
         print("Error: API endpoint must be provided via --api-endpoint or RUNPOD_ENDPOINT_URL environment variable")
         return 1
+    
+    # If just endpoint ID is provided, construct full URL
+    if not api_endpoint.startswith('http'):
+        api_endpoint = f"https://api.runpod.ai/v2/{api_endpoint}/run"
+        print(f"Constructed full URL: {api_endpoint}")
     
     # Test the API
     result = test_transcription(

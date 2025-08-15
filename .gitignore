@@ -114,3 +114,22 @@ Thumbs.db
 # Test outputs
 test_output.json
 transcription_*.json
+*.txt
+chunks/
+smart_chunks/
+*test*.py
+debug*.py
+*debug*
+calculate_optimal_chunks.py
+check_results.py
+clean_word_diff.py
+compare_transcriptions.py
+convert_mp3_to_wav.py
+create_test_audio.py
+find_word_difference.py
+find_word_timestamps.py
+fix_audio.py
+smart_split_transcribe.py
+split_and_transcribe.py
+verify_audio.py
+handler_old.py

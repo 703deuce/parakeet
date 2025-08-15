@@ -1,0 +1,10 @@
+TRANSCRIPTION:
+==================================================
+
+
+METADATA:
+==================================================
+Audio Duration: 5.00 seconds
+Chunks Processed: 1
+Model Used: nvidia/parakeet-tdt-0.6b-v2
+

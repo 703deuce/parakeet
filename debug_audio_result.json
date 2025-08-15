@@ -1,0 +1,16 @@
+{
+  "delayTime": 161,
+  "executionTime": 407,
+  "id": "92d171f1-1af0-4909-8e6f-ef779e6a9ac8-u1",
+  "output": {
+    "audio_duration_seconds": 5,
+    "char_timestamps": [],
+    "chunks_processed": 1,
+    "model_used": "nvidia/parakeet-tdt-0.6b-v2",
+    "segment_timestamps": [],
+    "text": "",
+    "word_timestamps": []
+  },
+  "status": "COMPLETED",
+  "workerId": "o1lal76s1avz1j"
+}
