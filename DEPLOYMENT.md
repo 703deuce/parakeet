@@ -102,10 +102,46 @@ parakeet/
 ## Troubleshooting
 
 ### Common Issues:
-1. **Model loading timeout**: Increase max execution time
-2. **Out of memory**: Use GPU with more VRAM
-3. **Audio format errors**: Ensure proper base64 encoding
-4. **Long processing**: Audio automatically chunked at 20 minutes
+
+#### 1. **Dependency Conflicts During Build**
+If you see PyTorch version conflicts:
+```
+ERROR: torch 2.8.0 is incompatible with torchtext 0.17.0a0
+```
+
+**Solutions:**
+- Use the pinned versions in `requirements.txt` (torch==2.3.1)
+- Or try `requirements-minimal.txt` for maximum compatibility
+- Update Dockerfile to use: `COPY requirements-minimal.txt requirements.txt`
+
+#### 2. **Model Loading Timeout**
+- Increase max execution time to 600+ seconds
+- First request takes 30-60 seconds to download model
+
+#### 3. **Out of Memory Errors**
+- Use GPU with 16GB+ VRAM (RTX 4090, A100, H100)
+- Reduce chunk_duration parameter for very long audio
+
+#### 4. **Audio Format Errors**
+- Ensure proper base64 encoding
+- Supported formats: WAV, MP3, FLAC, M4A, OGG
+- Audio automatically resampled to 16kHz mono
+
+#### 5. **NeMo Installation Issues**
+If NeMo fails to install, try:
+```dockerfile
+# In Dockerfile, replace the pip install line with:
+RUN pip install --no-cache-dir torch==2.3.1 torchaudio==2.3.1 torchvision==0.18.1
+RUN pip install --no-cache-dir nemo_toolkit[asr]==2.2.0
+```
+
+### Alternative Docker Build:
+If main requirements fail, use minimal version:
+```bash
+# Copy minimal requirements
+cp requirements-minimal.txt requirements.txt
+docker build -t your-username/parakeet-transcription .
+```
 
 ### Logs:
 Check RunPod dashboard for detailed error logs and performance metrics.
