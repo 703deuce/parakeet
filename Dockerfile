@@ -18,7 +18,8 @@ RUN pip install --upgrade pip
 COPY requirements.txt .
 
 # Install dependencies following official NeMo documentation
-# First install latest PyTorch (already in base image), then NeMo
+# First install latest PyTorch, then NeMo as recommended
+RUN pip install -U torch torchaudio torchvision
 RUN pip install -U nemo_toolkit[asr]
 RUN pip install runpod>=1.5.0
 
