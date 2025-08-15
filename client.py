@@ -6,19 +6,30 @@ Simple Python client for Parakeet Transcription API
 import base64
 import requests
 import json
+import os
 from typing import Optional, Dict, Any
 
 class ParakeetClient:
     """Client for interacting with Parakeet Transcription API"""
     
-    def __init__(self, api_endpoint: str):
+    def __init__(self, api_endpoint: Optional[str] = None, api_key: Optional[str] = None):
         """
-        Initialize client with API endpoint
+        Initialize client with API endpoint and key
         
         Args:
-            api_endpoint: RunPod serverless endpoint URL
+            api_endpoint: RunPod serverless endpoint URL (uses RUNPOD_ENDPOINT_URL env var if None)
+            api_key: RunPod API key (uses RUNPOD_API_KEY env var if None)
         """
-        self.api_endpoint = api_endpoint
+        self.api_endpoint = api_endpoint or os.getenv('RUNPOD_ENDPOINT_URL')
+        self.api_key = api_key or os.getenv('RUNPOD_API_KEY')
+        
+        if not self.api_endpoint:
+            raise ValueError("API endpoint must be provided or set RUNPOD_ENDPOINT_URL environment variable")
+        
+        # Set up headers with API key if provided
+        self.headers = {'Content-Type': 'application/json'}
+        if self.api_key:
+            self.headers['Authorization'] = f'Bearer {self.api_key}'
     
     def transcribe_file(self, 
                        audio_file_path: str, 
@@ -80,7 +91,7 @@ class ParakeetClient:
         }
         
         try:
-            response = requests.post(self.api_endpoint, json=payload, timeout=600)
+            response = requests.post(self.api_endpoint, json=payload, headers=self.headers, timeout=600)
             
             if response.status_code == 200:
                 return response.json()
@@ -115,8 +126,15 @@ class ParakeetClient:
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize client with your RunPod endpoint
-    client = ParakeetClient("https://api.runpod.ai/v2/YOUR_ENDPOINT_ID/runsync")
+    # Option 1: Initialize client using environment variables
+    # Set RUNPOD_ENDPOINT_URL and RUNPOD_API_KEY environment variables
+    client = ParakeetClient()
+    
+    # Option 2: Initialize client with explicit values
+    # client = ParakeetClient(
+    #     api_endpoint="https://api.runpod.ai/v2/YOUR_ENDPOINT_ID/runsync",
+    #     api_key="your-runpod-api-key"
+    # )
     
     # Example 1: Transcribe a file without timestamps
     result = client.transcribe_file("audio.wav", include_timestamps=False)

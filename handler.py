@@ -13,6 +13,21 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Environment variables for RunPod configuration
+RUNPOD_API_KEY = os.getenv('RUNPOD_API_KEY')
+RUNPOD_ENDPOINT_ID = os.getenv('RUNPOD_ENDPOINT_ID')
+
+# Log configuration (without exposing sensitive data)
+if RUNPOD_API_KEY:
+    logger.info("RunPod API key loaded from environment")
+else:
+    logger.warning("RUNPOD_API_KEY environment variable not set")
+
+if RUNPOD_ENDPOINT_ID:
+    logger.info(f"RunPod endpoint ID: {RUNPOD_ENDPOINT_ID}")
+else:
+    logger.warning("RUNPOD_ENDPOINT_ID environment variable not set")
+
 # Global model variable
 model = None
 

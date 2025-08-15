@@ -21,7 +21,19 @@
 - **Max Execution Time**: 600 seconds (10 minutes)
 
 ### Environment Variables:
-None required - model downloads automatically
+Set these in your RunPod endpoint configuration for better security and flexibility:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RUNPOD_API_KEY` | Your RunPod API key (optional) | `your-api-key-here` |
+| `RUNPOD_ENDPOINT_ID` | Your endpoint ID for logging | `abc123def456` |
+| `RUNPOD_ENDPOINT_URL` | Full endpoint URL for clients | `https://api.runpod.ai/v2/abc123def456/runsync` |
+
+**How to set in RunPod:**
+1. Go to your serverless endpoint
+2. Click "Settings" → "Environment Variables"
+3. Add the variables above
+4. Save and redeploy
 
 ## API Usage
 

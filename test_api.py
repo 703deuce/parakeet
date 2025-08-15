@@ -115,16 +115,22 @@ def print_results(result):
 def main():
     parser = argparse.ArgumentParser(description='Test Parakeet Transcription API')
     parser.add_argument('audio_file', help='Path to audio file to transcribe')
-    parser.add_argument('--api-endpoint', required=True, help='API endpoint URL')
+    parser.add_argument('--api-endpoint', help='API endpoint URL (uses RUNPOD_ENDPOINT_URL env var if not provided)')
     parser.add_argument('--timestamps', action='store_true', help='Include timestamps in response')
     parser.add_argument('--chunk-duration', type=int, default=1200, help='Chunk duration in seconds (default: 1200)')
     parser.add_argument('--save-json', help='Save full response to JSON file')
     
     args = parser.parse_args()
     
+    # Get API endpoint from args or environment variable
+    api_endpoint = args.api_endpoint or os.getenv('RUNPOD_ENDPOINT_URL')
+    if not api_endpoint:
+        print("Error: API endpoint must be provided via --api-endpoint or RUNPOD_ENDPOINT_URL environment variable")
+        return 1
+    
     # Test the API
     result = test_transcription(
-        args.api_endpoint,
+        api_endpoint,
         args.audio_file,
         args.timestamps,
         args.chunk_duration

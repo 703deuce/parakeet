@@ -183,7 +183,19 @@ docker push your-username/parakeet-transcription
 
 ### 3. Environment Variables
 
-No additional environment variables are required. The model will be downloaded automatically on first run.
+Set these environment variables in your RunPod serverless endpoint configuration:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `RUNPOD_API_KEY` | Your RunPod API key | Optional |
+| `RUNPOD_ENDPOINT_ID` | Your endpoint ID for logging | Optional |
+| `RUNPOD_ENDPOINT_URL` | Full endpoint URL for client usage | Optional |
+
+**To set environment variables in RunPod:**
+1. Go to your serverless endpoint settings
+2. Click "Environment Variables" 
+3. Add the variables above
+4. Deploy/redeploy your endpoint
 
 ## Performance Considerations
 
