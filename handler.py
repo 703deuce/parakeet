@@ -264,3 +264,5 @@ if __name__ == "__main__":
     else:
         logger.error("Failed to load model. Exiting.")
         exit(1)
+
+# Build trigger: Added more workspace space for model download
