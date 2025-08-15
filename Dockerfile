@@ -9,22 +9,18 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
     sox \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and install build tools
-RUN pip install --upgrade pip setuptools wheel
+# Upgrade pip
+RUN pip install --upgrade pip
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 
-# Install dependencies with better conflict resolution
-RUN pip install --no-cache-dir --force-reinstall -r requirements.txt
-
-# Verify critical packages are working
-RUN python -c "import torch; print(f'PyTorch version: {torch.__version__}')" && \
-    python -c "import torchaudio; print(f'TorchAudio version: {torchaudio.__version__}')" && \
-    python -c "import nemo; print('NeMo imported successfully')"
+# Install dependencies following official NeMo documentation
+# First install latest PyTorch (already in base image), then NeMo
+RUN pip install -U nemo_toolkit[asr]
+RUN pip install runpod>=1.5.0
 
 # Copy the handler script
 COPY handler.py .
