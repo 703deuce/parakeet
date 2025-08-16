@@ -130,6 +130,12 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         logger.info(f"Diarizer keys: {list(diar_cfg.diarizer.keys())}")
         logger.info(f"Device value: {diar_cfg.diarizer.get('device', 'MISSING!')}")
         logger.info(f"Oracle VAD value: {diar_cfg.diarizer.get('oracle_vad', 'MISSING!')}")
+        
+        # CRITICAL: Print the pretty config to see exact structure
+        logger.info("=== NEMO CONFIG PRETTY OUTPUT ===")
+        logger.info(diar_cfg.pretty())
+        logger.info("=== END PRETTY OUTPUT ===")
+        
         logger.info("=== END CONFIG DEBUG ===")
         
         # Run diarization with ClusteringDiarizer
@@ -776,6 +782,7 @@ if __name__ == "__main__":
         logger.info("CRITICAL FIX: Added min_num_speakers and max_num_speakers to force speaker clustering!")
         logger.info("FIXED: Added missing oracle_vad key to NeMo diarization config!")
         logger.info("DEBUG: Added NeMo config structure verification to diagnose nesting issues!")
+        logger.info("DEBUG: Added diar_cfg.pretty() output to see exact NeMo config format!")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
