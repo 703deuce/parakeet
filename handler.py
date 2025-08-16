@@ -42,19 +42,18 @@ def load_diarization_model():
 
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
     """
-    Perform speaker diarization on audio file using NeMo ClusteringDiarizer
-    Returns list of segments with speaker labels and timestamps
+    Step 1: Run NeMo diarization to get speaker segments (RTTM)
+    Returns list of speaker segments with start/end times and speaker IDs
     """
     try:
-        logger.info(f"Performing speaker diarization on audio: {audio_path}")
+        logger.info(f"Starting NeMo diarization on: {audio_path}")
         
-        # Create a simple manifest for diarization (must be a list!)
+        # Create manifest for NeMo
         manifest_data = [{
             "audio_filepath": audio_path,
             "offset": 0,
             "duration": None,
             "label": "infer",
-            "text": "-",
             "num_speakers": num_speakers,
             "rttm_filepath": None,
             "uem_filepath": None
@@ -68,10 +67,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             manifest_file.write('\n')
         manifest_file.close()
         
-        # Configure diarization with proper NeMo pipeline - FORCE SPEAKER CLUSTERING
+        # Configure diarization with proper NeMo pipeline
         from omegaconf import OmegaConf
         
-        # Force speaker clustering by setting both min and max speakers
         min_speakers = int(num_speakers) if num_speakers else 1
         max_speakers = int(num_speakers) if num_speakers else 8
         
@@ -81,107 +79,36 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         # Update only the fields we need for our workflow
         diar_cfg.diarizer.manifest_filepath = manifest_file.name
         diar_cfg.diarizer.out_dir = tempfile.gettempdir()
-        diar_cfg.diarizer.device = "cuda"  # Use GPU
-        diar_cfg.diarizer.oracle_vad = False  # Use NeMo's VAD
-        diar_cfg.diarizer.min_num_speakers = min_speakers  # Force minimum speakers
-        diar_cfg.diarizer.max_num_speakers = max_speakers  # Force maximum speakers
+        diar_cfg.diarizer.device = "cuda"
+        diar_cfg.diarizer.oracle_vad = False
+        diar_cfg.diarizer.min_num_speakers = min_speakers
+        diar_cfg.diarizer.max_num_speakers = max_speakers
         
-        # Update clustering parameters to force speaker detection
+        # Update clustering parameters
         diar_cfg.diarizer.clustering.parameters.oracle_num_speakers = num_speakers is not None
         diar_cfg.diarizer.clustering.parameters.min_num_speakers = min_speakers
         diar_cfg.diarizer.clustering.parameters.max_num_speakers = max_speakers
         
-        logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
+        logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}")
         
         # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
-        logger.info(f"Initializing ClusteringDiarizer with official NeMo config")
+        logger.info("Initializing ClusteringDiarizer with official NeMo config")
         diarizer = ClusteringDiarizer(cfg=diar_cfg)
         
         logger.info("Starting diarization process...")
         diarizer.diarize()
         
-        # Parse results from RTTM file
-        # NeMo might create RTTM with different naming conventions
-        possible_rttm_files = [
-            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm"),
-            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path).split('.')[0]}.rttm"),
-            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path)}.rttm"),
-            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path).split('.')[0]}.rttm")
-        ]
+        # Parse RTTM file to get speaker segments
+        segments = parse_rttm_file(audio_path)
         
-        segments = []
-        rttm_file = None
-        
-        # Find the actual RTTM file
-        for rttm_path in possible_rttm_files:
-            if os.path.exists(rttm_path):
-                rttm_file = rttm_path
-                logger.info(f"Found RTTM file: {rttm_file}")
-                break
-        
-        if rttm_file:
-            # DEBUG: Log the entire RTTM file before parsing
-            logger.info("=== RTTM FILE CONTENTS START ===")
-            with open(rttm_file, 'r') as f:
-                rttm_content = f.read()
-                logger.info(rttm_content)
-            logger.info("=== RTTM FILE CONTENTS END ===")
-            
-            # Now parse the RTTM file
-            with open(rttm_file, 'r') as f:
-                for line_num, line in enumerate(f):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                        
-                    parts = line.split()
-                    if len(parts) >= 8:
-                        start_time = float(parts[3])
-                        duration = float(parts[4])
-                        end_time = start_time + duration
-                        speaker_id = parts[7]
-                        
-                        logger.info(f"RTTM line {line_num}: speaker={speaker_id}, start={start_time:.2f}s, end={end_time:.2f}s")
-                        
-                        segments.append({
-                            'start': start_time,
-                            'end': end_time,
-                            'speaker': speaker_id,
-                            'duration': duration
-                        })
-        else:
-            logger.warning(f"RTTM file not found. Checked paths: {possible_rttm_files}")
-            # Check what files are in the output directory
-            out_dir = tempfile.gettempdir()
-            logger.info(f"Files in output directory {out_dir}:")
-            try:
-                for file in os.listdir(out_dir):
-                    if 'rttm' in file.lower() or os.path.basename(audio_path) in file:
-                        logger.info(f"  Found: {file}")
-                
-                # Also check for pred_rttms subdirectory
-                pred_rttm_dir = os.path.join(out_dir, "pred_rttms")
-                if os.path.exists(pred_rttm_dir):
-                    logger.info(f"Files in pred_rttms directory:")
-                    for file in os.listdir(pred_rttm_dir):
-                        logger.info(f"  Found: {file}")
-            except Exception as e:
-                logger.error(f"Error listing output directory: {e}")
-        
-        # Cleanup temporary files
+        # Cleanup
         try:
             os.unlink(manifest_file.name)
-            if os.path.exists(rttm_file):
-                os.unlink(rttm_file)
-        except Exception as e:
-            logger.warning(f"Error cleaning up temp files: {e}")
-        
-        logger.info(f"Diarization completed: {len(segments)} segments found")
-        if segments:
-            speakers_found = set(seg['speaker'] for seg in segments)
-            logger.info(f"Speakers detected: {speakers_found}")
-        
+        except:
+            pass
+            
+        logger.info(f"Diarization completed: {len(segments)} speaker segments found")
         return segments
         
     except Exception as e:
@@ -189,6 +116,141 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
+
+def parse_rttm_file(audio_path: str) -> List[Dict[str, Any]]:
+    """Parse RTTM file to extract speaker segments"""
+    segments = []
+    
+    # Find the RTTM file
+    possible_rttm_files = [
+        os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm"),
+        os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path).split('.')[0]}.rttm"),
+        os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path)}.rttm"),
+        os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path).split('.')[0]}.rttm")
+    ]
+    
+    rttm_file = None
+    for rttm_path in possible_rttm_files:
+        if os.path.exists(rttm_path):
+            rttm_file = rttm_path
+            logger.info(f"Found RTTM file: {rttm_file}")
+            break
+    
+    if rttm_file:
+        # Parse RTTM file
+        with open(rttm_file, 'r') as f:
+            for line_num, line in enumerate(f):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                    
+                parts = line.split()
+                if len(parts) >= 8:
+                    start_time = float(parts[3])
+                    duration = float(parts[4])
+                    end_time = start_time + duration
+                    speaker_id = parts[7]
+                    
+                    logger.info(f"RTTM line {line_num}: speaker={speaker_id}, start={start_time:.2f}s, end={end_time:.2f}s")
+                    
+                    segments.append({
+                        'start': start_time,
+                        'end': end_time,
+                        'speaker': speaker_id,
+                        'duration': duration
+                    })
+    else:
+        logger.warning(f"RTTM file not found. Checked paths: {possible_rttm_files}")
+    
+    return segments
+
+def combine_diarization_and_transcription(diarization_segments: List[Dict[str, Any]], 
+                                        transcription_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Step 3: Combine diarization segments with transcription timestamps
+    Assigns speaker labels to each transcribed word/segment based on timing overlap
+    """
+    logger.info("Combining diarization and transcription results...")
+    
+    combined_results = []
+    
+    # Get transcription segments with timestamps
+    if transcription_result.get('segment_timestamps'):
+        # Use segment-level timestamps for better accuracy
+        transcript_segments = transcription_result['segment_timestamps']
+        logger.info(f"Matching {len(transcript_segments)} transcript segments to {len(diarization_segments)} speaker segments")
+        
+        for seg in transcript_segments:
+            seg_start = seg['start']
+            seg_end = seg['end']
+            seg_text = seg['text']
+            
+            # Find which speaker segment this transcript segment overlaps with
+            assigned_speaker = 'UNKNOWN'
+            max_overlap = 0
+            
+            for spk_seg in diarization_segments:
+                spk_start = spk_seg['start']
+                spk_end = spk_seg['end']
+                
+                # Calculate overlap
+                overlap_start = max(seg_start, spk_start)
+                overlap_end = min(seg_end, spk_end)
+                overlap = max(0, overlap_end - overlap_start)
+                
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    assigned_speaker = spk_seg['speaker']
+            
+            # Only assign speaker if there's meaningful overlap
+            if max_overlap > 0.1:  # At least 100ms overlap
+                combined_results.append({
+                    'speaker': assigned_speaker,
+                    'start_time': seg_start,
+                    'end_time': seg_end,
+                    'text': seg_text,
+                    'overlap_duration': max_overlap
+                })
+            else:
+                combined_results.append({
+                    'speaker': 'UNKNOWN',
+                    'start_time': seg_start,
+                    'end_time': seg_end,
+                    'text': seg_text,
+                    'overlap_duration': 0
+                })
+    
+    elif transcription_result.get('word_timestamps'):
+        # Fallback to word-level timestamps
+        word_segments = transcription_result['word_timestamps']
+        logger.info(f"Matching {len(word_segments)} words to {len(diarization_segments)} speaker segments")
+        
+        for word in word_segments:
+            word_start = word['start']
+            word_end = word['end']
+            word_text = word['text']
+            
+            # Find speaker for this word
+            assigned_speaker = 'UNKNOWN'
+            for spk_seg in diarization_segments:
+                if word_start >= spk_seg['start'] and word_end <= spk_seg['end']:
+                    assigned_speaker = spk_seg['speaker']
+                    break
+            
+            combined_results.append({
+                'speaker': assigned_speaker,
+                'start_time': word_start,
+                'end_time': word_end,
+                'text': word_text
+            })
+    
+    else:
+        # No timestamps available, can't combine
+        logger.warning("No timestamps available in transcription, cannot assign speakers")
+        return []
+    
+    logger.info(f"Combined {len(combined_results)} segments with speaker labels")
+    return combined_results
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
     """Extract audio segment from start to end time"""
@@ -584,55 +646,60 @@ def handler(job):
             total_duration = chunk_times[-1][1] if chunk_times else 0
             
             if use_diarization:
-                # DIARIZATION MODE: Process each chunk with diarization + transcription
-                logger.info(f"Processing {len(chunk_files)} chunks with diarization...")
+                # NEW DIARIZATION WORKFLOW: NeMo diarization first, then Parakeet transcription, then combine
+                logger.info(f"Processing {len(chunk_files)} chunks with new diarization workflow...")
                 
                 diarized_results = []
                 
                 for i, chunk_path in enumerate(chunk_files):
                     chunk_start_time, chunk_end_time = chunk_times[i]
-                    logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with diarization ({chunk_start_time:.1f}s-{chunk_end_time:.1f}s)")
+                    logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with new workflow ({chunk_start_time:.1f}s-{chunk_end_time:.1f}s)")
                     
-                    # Perform diarization on this chunk
+                    # STEP 1: Run NeMo diarization on this chunk
+                    logger.info(f"  Step 1: Running NeMo diarization on chunk {i+1}")
                     chunk_diarized_segments = perform_speaker_diarization(chunk_path, num_speakers)
                     
                     if chunk_diarized_segments:
-                        # Process each speaker segment within this chunk
-                        for segment in chunk_diarized_segments:
-                            segment_start = segment['start'] + chunk_start_time  # Adjust to absolute time
-                            segment_end = segment['end'] + chunk_start_time
-                            speaker_id = segment['speaker']
+                        logger.info(f"  ✅ Diarization found {len(chunk_diarized_segments)} speaker segments")
+                        
+                        # STEP 2: Run Parakeet transcription on the entire chunk (with timestamps)
+                        logger.info(f"  Step 2: Running Parakeet transcription on chunk {i+1}")
+                        chunk_transcription = transcribe_audio_chunk(chunk_path, include_timestamps=True)
+                        
+                        if chunk_transcription.get('text'):
+                            logger.info(f"  ✅ Transcription completed: {len(chunk_transcription.get('text', ''))} characters")
                             
-                            # Extract the speaker segment from the chunk
-                            segment_file = extract_audio_segment(chunk_path, segment['start'], segment['end'])
-                            if segment_file:
-                                temp_files_to_cleanup.append(segment_file)
-                                
-                                # Transcribe this speaker segment
-                                segment_result = transcribe_audio_chunk(segment_file, include_timestamps)
-                                
-                                # Adjust timestamps to absolute time
-                                if segment_result.get('word_timestamps'):
-                                    for word_ts in segment_result['word_timestamps']:
-                                        word_ts['start'] += segment_start
-                                        word_ts['end'] += segment_start
-                                
-                                if segment_result.get('segment_timestamps'):
-                                    for seg_ts in segment_result['segment_timestamps']:
-                                        seg_ts['start'] += segment_start
-                                        seg_ts['end'] += segment_start
-                                
-                                # Add to results
-                                diarized_results.append({
-                                    'speaker': speaker_id,
-                                    'start_time': segment_start,
-                                    'end_time': segment_end,
-                                    'duration': segment_end - segment_start,
-                                    'text': segment_result.get('text', ''),
-                                    'word_timestamps': segment_result.get('word_timestamps', []),
-                                    'segment_timestamps': segment_result.get('segment_timestamps', []),
-                                    'source_chunk': i + 1
-                                })
+                            # STEP 3: Combine diarization and transcription results
+                            logger.info(f"  Step 3: Combining diarization and transcription for chunk {i+1}")
+                            
+                            # Adjust transcription timestamps to absolute time
+                            adjusted_transcription = chunk_transcription.copy()
+                            if adjusted_transcription.get('word_timestamps'):
+                                for word_ts in adjusted_transcription['word_timestamps']:
+                                    word_ts['start'] += chunk_start_time
+                                    word_ts['end'] += chunk_start_time
+                            
+                            if adjusted_transcription.get('segment_timestamps'):
+                                for seg_ts in adjusted_transcription['segment_timestamps']:
+                                    seg_ts['start'] += chunk_start_time
+                                    seg_ts['end'] += chunk_start_time
+                            
+                            # Combine diarization segments with transcription
+                            combined_segments = combine_diarization_and_transcription(
+                                chunk_diarized_segments, 
+                                adjusted_transcription
+                            )
+                            
+                            # Add chunk info to each segment
+                            for seg in combined_segments:
+                                seg['source_chunk'] = i + 1
+                                seg['chunk_start_time'] = chunk_start_time
+                                seg['chunk_end_time'] = chunk_end_time
+                            
+                            diarized_results.extend(combined_segments)
+                            logger.info(f"  ✅ Combined {len(combined_segments)} segments for chunk {i+1}")
+                        else:
+                            logger.warning(f"  ❌ Transcription failed for chunk {i+1}")
                     else:
                         # Fallback: transcribe chunk normally if no diarization found
                         logger.warning(f"No speakers detected in chunk {i+1}, transcribing normally")
@@ -669,7 +736,7 @@ def handler(job):
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                     'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
                     'diarization_model': 'nvidia/speakerverification_en_titanet_large',
-                    'processing_method': 'chunk_based_diarization_with_transcription',
+                    'processing_method': 'nemo_diarization_then_parakeet_transcription',
                     'chunking_method': 'smart_silence_based',
                     'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
                 }
@@ -678,7 +745,7 @@ def handler(job):
                 merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
                 final_result['merged_text'] = merged_text
                 
-                logger.info(f"Chunk-based diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers across {len(chunk_files)} chunks")
+                logger.info(f"New diarization workflow completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers across {len(chunk_files)} chunks")
                 
                 return final_result
                 
