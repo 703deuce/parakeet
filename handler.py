@@ -68,14 +68,20 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             manifest_file.write('\n')
         manifest_file.close()
         
-        # Configure diarization with proper NeMo pipeline
+        # Configure diarization with proper NeMo pipeline - FORCE SPEAKER CLUSTERING
         from omegaconf import OmegaConf
+        
+        # Force speaker clustering by setting both min and max speakers
+        min_speakers = int(num_speakers) if num_speakers else 1
+        max_speakers = int(num_speakers) if num_speakers else 8
+        
         diar_cfg = OmegaConf.create({
             'diarizer': {
                 'manifest_filepath': manifest_file.name,
                 'out_dir': tempfile.gettempdir(),
                 'oracle_num_speakers': num_speakers is not None,  # Use oracle if num_speakers provided
-                'max_num_speakers': num_speakers if num_speakers else 8,
+                'min_num_speakers': min_speakers,  # CRITICAL: Force minimum speakers
+                'max_num_speakers': max_speakers,  # CRITICAL: Force maximum speakers
                 'speaker_embeddings': {
                     'model_path': 'nvidia/speakerverification_en_titanet_large',
                     'parameters': {
@@ -88,7 +94,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 'clustering': {
                     'parameters': {
                         'oracle_num_speakers': num_speakers is not None,
-                        'max_num_speakers': num_speakers if num_speakers else 8,
+                        'min_num_speakers': min_speakers,  # CRITICAL: Force clustering to find min speakers
+                        'max_num_speakers': max_speakers,  # CRITICAL: Force clustering to find max speakers
                         'enhanced_count_thres': 40,
                         'max_rp_threshold': 0.25,
                         'sparse_search_volume': 30
@@ -111,6 +118,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 }
             }
         })
+        
+        logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
         
         # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
@@ -140,6 +149,14 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 break
         
         if rttm_file:
+            # DEBUG: Log the entire RTTM file before parsing
+            logger.info("=== RTTM FILE CONTENTS START ===")
+            with open(rttm_file, 'r') as f:
+                rttm_content = f.read()
+                logger.info(rttm_content)
+            logger.info("=== RTTM FILE CONTENTS END ===")
+            
+            # Now parse the RTTM file
             with open(rttm_file, 'r') as f:
                 for line_num, line in enumerate(f):
                     line = line.strip()
@@ -745,6 +762,7 @@ if __name__ == "__main__":
         
         logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
         logger.info("FIXED: Now using proper NeMo ClusteringDiarizer pipeline for real speaker labels (spk0, spk1, etc.)")
+        logger.info("CRITICAL FIX: Added min_num_speakers and max_num_speakers to force speaker clustering!")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
