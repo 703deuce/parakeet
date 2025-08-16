@@ -75,51 +75,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         min_speakers = int(num_speakers) if num_speakers else 1
         max_speakers = int(num_speakers) if num_speakers else 8
         
-        diar_cfg = OmegaConf.create({
-            'diarizer': {
-                'manifest_filepath': manifest_file.name,
-                'out_dir': tempfile.gettempdir(),
-                'device': 'cuda',  # CRITICAL: Specify GPU device for NeMo
-                'oracle_num_speakers': num_speakers is not None,  # Use oracle if num_speakers provided
-                'min_num_speakers': min_speakers,  # CRITICAL: Force minimum speakers
-                'max_num_speakers': max_speakers,  # CRITICAL: Force maximum speakers
-                'oracle_vad': False,  # CRITICAL: Add missing oracle_vad key
-                'speaker_embeddings': {
-                    'model_path': 'nvidia/speakerverification_en_titanet_large',
-                    'parameters': {
-                        'window_length_in_sec': 0.63,
-                        'shift_length_in_sec': 0.01,
-                        'multiscale_weights': [1, 1, 1, 1, 1],
-                        'save_embeddings': False
-                    }
-                },
-                'clustering': {
-                    'parameters': {
-                        'oracle_num_speakers': num_speakers is not None,
-                        'min_num_speakers': min_speakers,  # CRITICAL: Force clustering to find min speakers
-                        'max_num_speakers': max_speakers,  # CRITICAL: Force clustering to find max speakers
-                        'enhanced_count_thres': 40,
-                        'max_rp_threshold': 0.25,
-                        'sparse_search_volume': 30
-                    }
-                },
-                'vad': {
-                    'model_path': 'nvidia/vad_multilingual_marblenet',
-                    'parameters': {
-                        'window_length_in_sec': 0.63,
-                        'shift_length_in_sec': 0.01,
-                        'smoothing': "median",
-                        'overlap': 0.875,
-                        'onset': 0.8,
-                        'offset': 0.6,
-                        'pad_onset': 0.05,
-                        'pad_offset': -0.1,
-                        'min_duration_on': 0.2,
-                        'min_duration_off': 0.2
-                    }
-                }
-            }
-        })
+        # Load the official NeMo diarization config as base
+        diar_cfg = OmegaConf.load("diar_infer_general.yaml")
+        
+        # Update only the fields we need for our workflow
+        diar_cfg.diarizer.manifest_filepath = manifest_file.name
+        diar_cfg.diarizer.out_dir = tempfile.gettempdir()
+        diar_cfg.diarizer.device = "cuda"  # Use GPU
+        diar_cfg.diarizer.oracle_vad = False  # Use NeMo's VAD
+        diar_cfg.diarizer.min_num_speakers = min_speakers  # Force minimum speakers
+        diar_cfg.diarizer.max_num_speakers = max_speakers  # Force maximum speakers
+        
+        # Update clustering parameters to force speaker detection
+        diar_cfg.diarizer.clustering.parameters.oracle_num_speakers = num_speakers is not None
+        diar_cfg.diarizer.clustering.parameters.min_num_speakers = min_speakers
+        diar_cfg.diarizer.clustering.parameters.max_num_speakers = max_speakers
         
         logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
         
