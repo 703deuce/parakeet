@@ -118,6 +118,7 @@ transcription_*.json
 chunks/
 smart_chunks/
 *test*.py
+!test_diarization_api.py
 debug*.py
 *debug*
 calculate_optimal_chunks.py

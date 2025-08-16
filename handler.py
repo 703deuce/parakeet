@@ -13,8 +13,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global model variable
+# Global model variables
 model = None
+diarization_model = None
 
 def load_model():
     """Load the NVIDIA Parakeet model"""
@@ -30,6 +31,160 @@ def load_model():
     except Exception as e:
         logger.error(f"Error loading model: {str(e)}")
         return False
+
+def load_diarization_model():
+    """Load the NeMo Speaker Diarization model"""
+    global diarization_model
+    try:
+        import nemo.collections.asr as nemo_asr
+        logger.info("Loading NeMo Speaker Diarization model...")
+        diarization_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
+            model_name="nvidia/speakerverification_en_titanet_large"
+        )
+        logger.info("Diarization model loaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error loading diarization model: {str(e)}")
+        return False
+
+def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
+    """
+    Perform speaker diarization on audio file
+    Returns list of segments with speaker labels and timestamps
+    """
+    try:
+        from nemo.collections.asr.parts.utils.speaker_utils import get_uniq_id_list_from_manifest
+        from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
+        
+        logger.info(f"Performing speaker diarization on audio: {audio_path}")
+        
+        # Create a simple manifest for diarization
+        manifest_data = {
+            "audio_filepath": audio_path,
+            "offset": 0,
+            "duration": None,
+            "label": "infer",
+            "text": "-",
+            "num_speakers": num_speakers,
+            "rttm_filepath": None,
+            "uem_filepath": None
+        }
+        
+        # Create temporary manifest file
+        manifest_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        import json
+        json.dump(manifest_data, manifest_file)
+        manifest_file.close()
+        
+        # Configure diarization
+        from omegaconf import OmegaConf
+        diar_cfg = OmegaConf.create({
+            'diarizer': {
+                'manifest_filepath': manifest_file.name,
+                'out_dir': tempfile.gettempdir(),
+                'speaker_embeddings': {
+                    'model_path': 'nvidia/speakerverification_en_titanet_large',
+                    'parameters': {
+                        'window_length_in_sec': 0.63,
+                        'shift_length_in_sec': 0.01,
+                        'multiscale_weights': [1, 1, 1, 1, 1],
+                        'save_embeddings': False
+                    }
+                },
+                'clustering': {
+                    'parameters': {
+                        'oracle_num_speakers': False,
+                        'max_num_speakers': 8,
+                        'enhanced_count_thres': 40,
+                        'max_rp_threshold': 0.25,
+                        'sparse_search_volume': 30
+                    }
+                },
+                'vad': {
+                    'model_path': 'nvidia/vad_multilingual_marblenet',
+                    'parameters': {
+                        'window_length_in_sec': 0.63,
+                        'shift_length_in_sec': 0.01,
+                        'smoothing': "median",
+                        'overlap': 0.875,
+                        'onset': 0.8,
+                        'offset': 0.6,
+                        'pad_onset': 0.05,
+                        'pad_offset': -0.1,
+                        'min_duration_on': 0.2,
+                        'min_duration_off': 0.2
+                    }
+                }
+            }
+        })
+        
+        # Run diarization
+        from nemo.collections.asr.models import ClusteringDiarizer
+        diarizer = ClusteringDiarizer(cfg=diar_cfg)
+        diarizer.diarize()
+        
+        # Parse results
+        rttm_file = os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm")
+        segments = []
+        
+        if os.path.exists(rttm_file):
+            with open(rttm_file, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 8:
+                        start_time = float(parts[3])
+                        duration = float(parts[4])
+                        end_time = start_time + duration
+                        speaker_id = parts[7]
+                        
+                        segments.append({
+                            'start': start_time,
+                            'end': end_time,
+                            'speaker': speaker_id,
+                            'duration': duration
+                        })
+        
+        # Cleanup temporary files
+        try:
+            os.unlink(manifest_file.name)
+            if os.path.exists(rttm_file):
+                os.unlink(rttm_file)
+        except:
+            pass
+        
+        logger.info(f"Diarization completed: {len(segments)} segments found")
+        return segments
+        
+    except Exception as e:
+        logger.error(f"Error in speaker diarization: {str(e)}")
+        return []
+
+def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
+    """Extract audio segment from start to end time"""
+    try:
+        from pydub import AudioSegment
+        
+        # Load audio
+        if audio_path.lower().endswith('.mp3'):
+            audio = AudioSegment.from_mp3(audio_path)
+        else:
+            audio = AudioSegment.from_wav(audio_path)
+        
+        # Extract segment (convert seconds to milliseconds)
+        start_ms = int(start_time * 1000)
+        end_ms = int(end_time * 1000)
+        segment = audio[start_ms:end_ms]
+        
+        # Save to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+        segment.export(temp_file.name, format="wav", parameters=["-ar", "16000", "-ac", "1"])
+        temp_file.close()
+        
+        return temp_file.name
+        
+    except Exception as e:
+        logger.error(f"Error extracting audio segment: {str(e)}")
+        return None
 
 def detect_silence_split_points(audio_path: str, target_chunk_duration: int, audio_format: str = "wav"):
     """
@@ -326,7 +481,7 @@ def cleanup_temp_files(file_paths: List[str]):
 
 def handler(job):
     """
-    RunPod handler function for audio transcription with smart silence-based chunking
+    RunPod handler function for audio transcription with smart silence-based chunking and optional speaker diarization
     
     Expected input format:
     {
@@ -334,7 +489,9 @@ def handler(job):
             "audio_data": "base64_encoded_audio_data",  # Base64 encoded audio file
             "audio_format": "wav",  # Optional: audio format (wav, mp3, flac, etc.)
             "include_timestamps": true,  # Optional: include word/segment timestamps
-            "chunk_duration": 300  # Optional: target chunk duration in seconds (default 5 minutes)
+            "chunk_duration": 300,  # Optional: target chunk duration in seconds (default 5 minutes)
+            "use_diarization": false,  # Optional: enable speaker diarization (default false)
+            "num_speakers": null  # Optional: expected number of speakers (null for auto-detection)
         }
     }
     """
@@ -350,8 +507,10 @@ def handler(job):
         audio_format = job_input.get("audio_format", "wav")
         include_timestamps = job_input.get("include_timestamps", False)
         chunk_duration = job_input.get("chunk_duration", 300)  # 5 minutes default
+        use_diarization = job_input.get("use_diarization", False)
+        num_speakers = job_input.get("num_speakers", None)
         
-        logger.info(f"Processing transcription request: format={audio_format}, timestamps={include_timestamps}, chunk_duration={chunk_duration}s")
+        logger.info(f"Processing transcription request: format={audio_format}, timestamps={include_timestamps}, chunk_duration={chunk_duration}s, diarization={use_diarization}")
         
         # Decode base64 audio data
         try:
@@ -367,44 +526,122 @@ def handler(job):
         temp_files_to_cleanup = [temp_audio_file.name]
         
         try:
-            # Smart split audio at silence points
-            chunk_info = smart_split_audio(temp_audio_file.name, audio_format, chunk_duration)
+            if use_diarization:
+                # Speaker Diarization + Transcription Pipeline
+                logger.info("Starting speaker diarization pipeline...")
+                
+                # Step 1: Perform speaker diarization
+                diarized_segments = perform_speaker_diarization(temp_audio_file.name, num_speakers)
+                
+                if not diarized_segments:
+                    logger.warning("No diarization segments found, falling back to regular transcription")
+                    use_diarization = False
+                else:
+                    # Step 2: Transcribe each diarized segment
+                    diarized_results = []
+                    total_duration = 0
+                    
+                    for i, segment in enumerate(diarized_segments):
+                        start_time = segment['start']
+                        end_time = segment['end']
+                        speaker_id = segment['speaker']
+                        
+                        logger.info(f"Transcribing segment {i+1}/{len(diarized_segments)} - Speaker {speaker_id} ({start_time:.1f}s-{end_time:.1f}s)")
+                        
+                        # Extract audio segment
+                        segment_file = extract_audio_segment(temp_audio_file.name, start_time, end_time)
+                        if segment_file:
+                            temp_files_to_cleanup.append(segment_file)
+                            
+                            # Transcribe segment
+                            segment_result = transcribe_audio_chunk(segment_file, include_timestamps)
+                            
+                            # Adjust timestamps to absolute time
+                            if segment_result.get('word_timestamps'):
+                                for word_ts in segment_result['word_timestamps']:
+                                    word_ts['start'] += start_time
+                                    word_ts['end'] += start_time
+                            
+                            if segment_result.get('segment_timestamps'):
+                                for seg_ts in segment_result['segment_timestamps']:
+                                    seg_ts['start'] += start_time
+                                    seg_ts['end'] += start_time
+                            
+                            # Add speaker information
+                            diarized_results.append({
+                                'speaker': speaker_id,
+                                'start_time': start_time,
+                                'end_time': end_time,
+                                'duration': end_time - start_time,
+                                'text': segment_result.get('text', ''),
+                                'word_timestamps': segment_result.get('word_timestamps', []),
+                                'segment_timestamps': segment_result.get('segment_timestamps', [])
+                            })
+                            
+                            total_duration = max(total_duration, end_time)
+                    
+                    # Format diarized output
+                    final_result = {
+                        'diarized_transcript': diarized_results,
+                        'audio_duration_seconds': total_duration,
+                        'segments_processed': len(diarized_segments),
+                        'speakers_detected': len(set(seg['speaker'] for seg in diarized_segments)),
+                        'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
+                        'diarization_model': 'nvidia/speakerverification_en_titanet_large',
+                        'processing_method': 'speaker_diarization_with_transcription'
+                    }
+                    
+                    # Also provide merged text for convenience
+                    merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
+                    final_result['merged_text'] = merged_text
+                    
+                    logger.info(f"Diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
+                    
+                    return final_result
             
-            # Extract file paths and timing info
-            chunk_files = [info[0] for info in chunk_info]
-            chunk_times = [(info[1], info[2]) for info in chunk_info]
-            
-            temp_files_to_cleanup.extend(chunk_files)
-            
-            # Calculate total duration
-            total_duration = chunk_times[-1][1] if chunk_times else 0
-            
-            # Transcribe each chunk
-            chunk_results = []
-            for i, chunk_path in enumerate(chunk_files):
-                start_time, end_time = chunk_times[i]
-                logger.info(f"Transcribing chunk {i+1}/{len(chunk_files)} ({start_time:.1f}s-{end_time:.1f}s)")
-                chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps)
-                chunk_results.append(chunk_result)
-            
-            # Merge results with smart timing
-            if len(chunk_results) == 1:
-                final_result = chunk_results[0]
-            else:
-                final_result = merge_smart_transcription_results(chunk_results, chunk_times)
-            
-            # Add metadata
-            final_result.update({
-                'audio_duration_seconds': total_duration,
-                'chunks_processed': len(chunk_files),
-                'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
-                'chunking_method': 'smart_silence_based',
-                'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
-            })
-            
-            logger.info(f"Transcription completed: {len(final_result.get('word_timestamps', []))} words, {len(chunk_files)} chunks")
-            
-            return final_result
+            if not use_diarization:
+                # Regular Transcription Pipeline (existing logic)
+                logger.info("Starting regular transcription pipeline...")
+                
+                # Smart split audio at silence points
+                chunk_info = smart_split_audio(temp_audio_file.name, audio_format, chunk_duration)
+                
+                # Extract file paths and timing info
+                chunk_files = [info[0] for info in chunk_info]
+                chunk_times = [(info[1], info[2]) for info in chunk_info]
+                
+                temp_files_to_cleanup.extend(chunk_files)
+                
+                # Calculate total duration
+                total_duration = chunk_times[-1][1] if chunk_times else 0
+                
+                # Transcribe each chunk
+                chunk_results = []
+                for i, chunk_path in enumerate(chunk_files):
+                    start_time, end_time = chunk_times[i]
+                    logger.info(f"Transcribing chunk {i+1}/{len(chunk_files)} ({start_time:.1f}s-{end_time:.1f}s)")
+                    chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps)
+                    chunk_results.append(chunk_result)
+                
+                # Merge results with smart timing
+                if len(chunk_results) == 1:
+                    final_result = chunk_results[0]
+                else:
+                    final_result = merge_smart_transcription_results(chunk_results, chunk_times)
+                
+                # Add metadata
+                final_result.update({
+                    'audio_duration_seconds': total_duration,
+                    'chunks_processed': len(chunk_files),
+                    'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
+                    'chunking_method': 'smart_silence_based',
+                    'processing_method': 'regular_transcription',
+                    'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
+                })
+                
+                logger.info(f"Transcription completed: {len(final_result.get('word_timestamps', []))} words, {len(chunk_files)} chunks")
+                
+                return final_result
             
         finally:
             # Clean up temporary files
@@ -418,8 +655,14 @@ def handler(job):
 if __name__ == "__main__":
     logger.info("Initializing NVIDIA Parakeet TDT 0.6B v2 model...")
     if load_model():
-        logger.info("Starting RunPod serverless handler with smart silence-based chunking...")
+        logger.info("Parakeet model loaded successfully")
+        
+        # Optionally pre-load diarization model (comment out to load on-demand)
+        # logger.info("Pre-loading NeMo Speaker Diarization model...")
+        # load_diarization_model()
+        
+        logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
         runpod.serverless.start({"handler": handler})
     else:
-        logger.error("Failed to load model. Exiting.")
+        logger.error("Failed to load Parakeet model. Exiting.")
         exit(1)
