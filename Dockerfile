@@ -23,8 +23,9 @@ RUN pip install -U torch torchaudio torchvision
 RUN pip install -U nemo_toolkit[asr]
 RUN pip install runpod>=1.5.0
 
-# Copy the handler script
+# Copy the handler script and config files
 COPY handler.py .
+COPY diar_infer_general.yaml .
 
 # Set environment variables
 ENV PYTHONPATH=/app
