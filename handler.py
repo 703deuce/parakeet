@@ -584,59 +584,109 @@ def handler(job):
             total_duration = chunk_times[-1][1] if chunk_times else 0
             
             if use_diarization:
-                # DIARIZATION MODE: Process each chunk with diarization + transcription
-                logger.info(f"Processing {len(chunk_files)} chunks with diarization...")
+                # NEW WORKFLOW: Diarization first, then transcription, then combine
+                logger.info(f"Processing {len(chunk_files)} chunks with NEW diarization workflow...")
+                logger.info("Step 1: Diarization on whole chunk, Step 2: Transcription on whole chunk, Step 3: Match timestamps")
                 
                 diarized_results = []
                 
                 for i, chunk_path in enumerate(chunk_files):
                     chunk_start_time, chunk_end_time = chunk_times[i]
-                    logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with diarization ({chunk_start_time:.1f}s-{chunk_end_time:.1f}s)")
+                    logger.info(f"Processing chunk {i+1}/{len(chunk_files)} ({chunk_start_time:.1f}s-{chunk_end_time:.1f}s)")
                     
-                    # Perform diarization on this chunk
+                    # STEP 1: Run diarization on the whole chunk
+                    logger.info(f"  Step 1: Diarization on chunk {i+1}")
                     chunk_diarized_segments = perform_speaker_diarization(chunk_path, num_speakers)
                     
-                    if chunk_diarized_segments:
-                        # Process each speaker segment within this chunk
-                        for segment in chunk_diarized_segments:
-                            segment_start = segment['start'] + chunk_start_time  # Adjust to absolute time
-                            segment_end = segment['end'] + chunk_start_time
-                            speaker_id = segment['speaker']
+                    # STEP 2: Run transcription on the whole chunk (SAME AS WORKING VERSION)
+                    logger.info(f"  Step 2: Transcription on chunk {i+1}")
+                    chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps=True)
+                    
+                    # STEP 3: Match timestamps to assign speakers
+                    logger.info(f"  Step 3: Matching timestamps for chunk {i+1}")
+                    
+                    if chunk_diarized_segments and chunk_result.get('text'):
+                        # We have both diarization and transcription - now match them
+                        logger.info(f"    Found {len(chunk_diarized_segments)} speaker segments and transcription text")
+                        
+                        # Use segment-level timestamps for better matching
+                        if chunk_result.get('segment_timestamps'):
+                            transcript_segments = chunk_result['segment_timestamps']
+                            logger.info(f"    Matching {len(transcript_segments)} transcript segments to speaker segments")
                             
-                            # Extract the speaker segment from the chunk
-                            segment_file = extract_audio_segment(chunk_path, segment['start'], segment['end'])
-                            if segment_file:
-                                temp_files_to_cleanup.append(segment_file)
+                            for seg in transcript_segments:
+                                seg_start = seg['start']
+                                seg_end = seg['end'] 
+                                seg_text = seg['text']
                                 
-                                # Transcribe this speaker segment
-                                segment_result = transcribe_audio_chunk(segment_file, include_timestamps)
+                                # Find which speaker segment this transcript segment overlaps with
+                                assigned_speaker = 'UNKNOWN'
+                                max_overlap = 0
                                 
-                                # Adjust timestamps to absolute time
-                                if segment_result.get('word_timestamps'):
-                                    for word_ts in segment_result['word_timestamps']:
-                                        word_ts['start'] += segment_start
-                                        word_ts['end'] += segment_start
+                                for spk_seg in chunk_diarized_segments:
+                                    spk_start = spk_seg['start']
+                                    spk_end = spk_seg['end']
+                                    
+                                    # Calculate overlap
+                                    overlap_start = max(seg_start, spk_start)
+                                    overlap_end = min(seg_end, spk_end)
+                                    overlap = max(0, overlap_end - overlap_start)
+                                    
+                                    if overlap > max_overlap:
+                                        max_overlap = overlap
+                                        assigned_speaker = spk_seg['speaker']
                                 
-                                if segment_result.get('segment_timestamps'):
-                                    for seg_ts in segment_result['segment_timestamps']:
-                                        seg_ts['start'] += segment_start
-                                        seg_ts['end'] += segment_start
-                                
-                                # Add to results
-                                diarized_results.append({
-                                    'speaker': speaker_id,
-                                    'start_time': segment_start,
-                                    'end_time': segment_end,
-                                    'duration': segment_end - segment_start,
-                                    'text': segment_result.get('text', ''),
-                                    'word_timestamps': segment_result.get('word_timestamps', []),
-                                    'segment_timestamps': segment_result.get('segment_timestamps', []),
-                                    'source_chunk': i + 1
-                                })
+                                # Only assign speaker if there's meaningful overlap
+                                if max_overlap > 0.1:  # At least 100ms overlap
+                                    diarized_results.append({
+                                        'speaker': assigned_speaker,
+                                        'start_time': seg_start + chunk_start_time,
+                                        'end_time': seg_end + chunk_start_time,
+                                        'duration': seg_end - seg_start,
+                                        'text': seg_text,
+                                        'word_timestamps': [],  # Could be added later
+                                        'segment_timestamps': [seg],
+                                        'source_chunk': i + 1,
+                                        'overlap_duration': max_overlap
+                                    })
+                                else:
+                                    # No good overlap, mark as unknown
+                                    diarized_results.append({
+                                        'speaker': 'UNKNOWN',
+                                        'start_time': seg_start + chunk_start_time,
+                                        'end_time': seg_end + chunk_start_time,
+                                        'duration': seg_end - seg_start,
+                                        'text': seg_text,
+                                        'word_timestamps': [],
+                                        'segment_timestamps': [seg],
+                                        'source_chunk': i + 1,
+                                        'overlap_duration': 0
+                                    })
+                            
+                            logger.info(f"    ✅ Matched {len(transcript_segments)} segments for chunk {i+1}")
+                        
+                        else:
+                            # Fallback: use the whole chunk text with first speaker
+                            first_speaker = chunk_diarized_segments[0]['speaker'] if chunk_diarized_segments else 'UNKNOWN'
+                            diarized_results.append({
+                                'speaker': first_speaker,
+                                'start_time': chunk_start_time,
+                                'end_time': chunk_end_time,
+                                'duration': chunk_end_time - chunk_start_time,
+                                'text': chunk_result.get('text', ''),
+                                'word_timestamps': chunk_result.get('word_timestamps', []),
+                                'segment_timestamps': chunk_result.get('segment_timestamps', []),
+                                'source_chunk': i + 1
+                            })
+                            logger.info(f"    ⚠️  No segment timestamps, using whole chunk with speaker {first_speaker}")
+                    
                     else:
-                        # Fallback: transcribe chunk normally if no diarization found
-                        logger.warning(f"No speakers detected in chunk {i+1}, transcribing normally")
-                        chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps)
+                        # Fallback: transcribe chunk normally if diarization or transcription failed
+                        logger.warning(f"No speakers detected or transcription failed in chunk {i+1}, transcribing normally")
+                        
+                        if not chunk_result.get('text'):
+                            # Retry transcription without timestamps
+                            chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps)
                         
                         # Adjust timestamps to absolute time
                         if chunk_result.get('word_timestamps'):
@@ -669,7 +719,7 @@ def handler(job):
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                     'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
                     'diarization_model': 'nvidia/speakerverification_en_titanet_large',
-                    'processing_method': 'chunk_based_diarization_with_transcription',
+                    'processing_method': 'diarization_then_transcription_then_match',
                     'chunking_method': 'smart_silence_based',
                     'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
                 }
@@ -678,7 +728,7 @@ def handler(job):
                 merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
                 final_result['merged_text'] = merged_text
                 
-                logger.info(f"Chunk-based diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers across {len(chunk_files)} chunks")
+                logger.info(f"NEW diarization workflow completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers across {len(chunk_files)} chunks")
                 
                 return final_result
                 
