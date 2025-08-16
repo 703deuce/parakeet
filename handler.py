@@ -34,150 +34,44 @@ def load_model():
 
 def load_diarization_model():
     """
-    Load NeMo diarization models on-demand
-    Note: We use ClusteringDiarizer which loads models automatically
+    Load pyannote.audio diarization pipeline
     """
-    logger.info("Diarization models will be loaded on-demand by ClusteringDiarizer")
-    return True
+    global diarization_model
+    try:
+        from pyannote.audio import Pipeline
+        logger.info("Loading pyannote.audio speaker diarization pipeline...")
+        # Load the latest pretrained pipeline (no auth token needed for public models)
+        diarization_model = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+        logger.info("Pyannote diarization pipeline loaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error loading pyannote diarization pipeline: {str(e)}")
+        return False
 
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
     """
-    Perform speaker diarization on audio file using NeMo ClusteringDiarizer
+    Perform speaker diarization on audio file using pyannote.audio
     Returns list of segments with speaker labels and timestamps
     """
     try:
-        logger.info(f"Performing speaker diarization on audio: {audio_path}")
+        logger.info(f"Performing pyannote.audio speaker diarization on: {audio_path}")
         
-        # Create a simple manifest for diarization (must be a list!)
-        manifest_data = [{
-            "audio_filepath": audio_path,
-            "offset": 0,
-            "duration": None,
-            "label": "infer",
-            "text": "-",
-            "num_speakers": num_speakers,
-            "rttm_filepath": None,
-            "uem_filepath": None
-        }]
+        # Run pyannote diarization
+        logger.info("Running pyannote diarization pipeline...")
+        diarization = diarization_model(audio_path)
         
-        # Create temporary manifest file
-        manifest_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-        import json
-        for item in manifest_data:
-            json.dump(item, manifest_file)
-            manifest_file.write('\n')
-        manifest_file.close()
-        
-        # Configure diarization with proper NeMo pipeline - FORCE SPEAKER CLUSTERING
-        from omegaconf import OmegaConf
-        
-        # Force speaker clustering by setting both min and max speakers
-        min_speakers = int(num_speakers) if num_speakers else 1
-        max_speakers = int(num_speakers) if num_speakers else 8
-        
-        # Load the official NeMo diarization config as base
-        diar_cfg = OmegaConf.load("diar_infer_general.yaml")
-        
-        # Update only the fields we need for our workflow
-        diar_cfg.diarizer.manifest_filepath = manifest_file.name
-        diar_cfg.diarizer.out_dir = tempfile.gettempdir()
-        diar_cfg.diarizer.device = "cuda"  # Use GPU
-        diar_cfg.diarizer.oracle_vad = False  # Use NeMo's VAD
-        diar_cfg.diarizer.min_num_speakers = min_speakers  # Force minimum speakers
-        diar_cfg.diarizer.max_num_speakers = max_speakers  # Force maximum speakers
-        
-        # Update clustering parameters to force speaker detection
-        diar_cfg.diarizer.clustering.parameters.oracle_num_speakers = num_speakers is not None
-        diar_cfg.diarizer.clustering.parameters.min_num_speakers = min_speakers
-        diar_cfg.diarizer.clustering.parameters.max_num_speakers = max_speakers
-        
-        logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
-        
-        # Run diarization with ClusteringDiarizer
-        from nemo.collections.asr.models import ClusteringDiarizer
-        logger.info(f"Initializing ClusteringDiarizer with official NeMo config")
-        diarizer = ClusteringDiarizer(cfg=diar_cfg)
-        
-        logger.info("Starting diarization process...")
-        diarizer.diarize()
-        
-        # Parse results from RTTM file
-        # NeMo might create RTTM with different naming conventions
-        possible_rttm_files = [
-            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm"),
-            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path).split('.')[0]}.rttm"),
-            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path)}.rttm"),
-            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path).split('.')[0]}.rttm")
-        ]
-        
+        # Convert pyannote output to our format
         segments = []
-        rttm_file = None
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({
+                'start': turn.start,
+                'end': turn.end,
+                'speaker': speaker,
+                'duration': turn.end - turn.start
+            })
+            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s)")
         
-        # Find the actual RTTM file
-        for rttm_path in possible_rttm_files:
-            if os.path.exists(rttm_path):
-                rttm_file = rttm_path
-                logger.info(f"Found RTTM file: {rttm_file}")
-                break
-        
-        if rttm_file:
-            # DEBUG: Log the entire RTTM file before parsing
-            logger.info("=== RTTM FILE CONTENTS START ===")
-            with open(rttm_file, 'r') as f:
-                rttm_content = f.read()
-                logger.info(rttm_content)
-            logger.info("=== RTTM FILE CONTENTS END ===")
-            
-            # Now parse the RTTM file
-            with open(rttm_file, 'r') as f:
-                for line_num, line in enumerate(f):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                        
-                    parts = line.split()
-                    if len(parts) >= 8:
-                        start_time = float(parts[3])
-                        duration = float(parts[4])
-                        end_time = start_time + duration
-                        speaker_id = parts[7]
-                        
-                        logger.info(f"RTTM line {line_num}: speaker={speaker_id}, start={start_time:.2f}s, end={end_time:.2f}s")
-                        
-                        segments.append({
-                            'start': start_time,
-                            'end': end_time,
-                            'speaker': speaker_id,
-                            'duration': duration
-                        })
-        else:
-            logger.warning(f"RTTM file not found. Checked paths: {possible_rttm_files}")
-            # Check what files are in the output directory
-            out_dir = tempfile.gettempdir()
-            logger.info(f"Files in output directory {out_dir}:")
-            try:
-                for file in os.listdir(out_dir):
-                    if 'rttm' in file.lower() or os.path.basename(audio_path) in file:
-                        logger.info(f"  Found: {file}")
-                
-                # Also check for pred_rttms subdirectory
-                pred_rttm_dir = os.path.join(out_dir, "pred_rttms")
-                if os.path.exists(pred_rttm_dir):
-                    logger.info(f"Files in pred_rttms directory:")
-                    for file in os.listdir(pred_rttm_dir):
-                        logger.info(f"  Found: {file}")
-            except Exception as e:
-                logger.error(f"Error listing output directory: {e}")
-        
-        # Cleanup temporary files
-        try:
-            os.unlink(manifest_file.name)
-            if os.path.exists(rttm_file):
-                os.unlink(rttm_file)
-        except Exception as e:
-            logger.warning(f"Error cleaning up temp files: {e}")
-        
-        logger.info(f"Diarization completed: {len(segments)} segments found")
+        logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
         if segments:
             speakers_found = set(seg['speaker'] for seg in segments)
             logger.info(f"Speakers detected: {speakers_found}")
@@ -185,7 +79,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         return segments
         
     except Exception as e:
-        logger.error(f"Error in speaker diarization: {str(e)}")
+        logger.error(f"Error in pyannote speaker diarization: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
@@ -718,7 +612,7 @@ def handler(job):
                     'segments_processed': len(diarized_results),
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                     'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
-                    'diarization_model': 'nvidia/speakerverification_en_titanet_large',
+                    'diarization_model': 'pyannote/speaker-diarization-3.1',
                     'processing_method': 'diarization_then_transcription_then_match',
                     'chunking_method': 'smart_silence_based',
                     'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
@@ -778,12 +672,15 @@ if __name__ == "__main__":
     if load_model():
         logger.info("Parakeet model loaded successfully")
         
-        # Optionally pre-load diarization model (comment out to load on-demand)
-        # logger.info("Pre-loading NeMo Speaker Diarization model...")
-        # load_diarization_model()
+        # Load pyannote diarization model
+        logger.info("Loading pyannote.audio diarization model...")
+        if load_diarization_model():
+            logger.info("Pyannote diarization model loaded successfully")
+        else:
+            logger.warning("Failed to load pyannote diarization model - diarization will be disabled")
         
-        logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
-        logger.info("IMPROVED: Now using official NeMo diarization config for proven compatibility")
+        logger.info("Starting RunPod serverless handler with smart chunking and pyannote diarization...")
+        logger.info("IMPROVED: Now using pyannote.audio for reliable speaker diarization")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")

@@ -1,0 +1,70 @@
+{
+  "chunks": [
+    {
+      "file": "unified_chunks\\unified_chunk_000.mp3",
+      "start_time": 0.0,
+      "end_time": 180.829,
+      "duration": 180.829,
+      "size_mb": 0.5178756713867188
+    },
+    {
+      "file": "unified_chunks\\unified_chunk_001.mp3",
+      "start_time": 180.829,
+      "end_time": 367.197,
+      "duration": 186.368,
+      "size_mb": 0.5336341857910156
+    },
+    {
+      "file": "unified_chunks\\unified_chunk_002.mp3",
+      "start_time": 367.197,
+      "end_time": 380.668,
+      "duration": 13.471,
+      "size_mb": 0.039043426513671875
+    }
+  ],
+  "results": [
+    null,
+    null,
+    {
+      "delayTime": 14824,
+      "executionTime": 4276,
+      "id": "7c6a4eb2-de00-47a7-b194-33d22ec8c50b-u1",
+      "output": {
+        "audio_duration_seconds": 13.471,
+        "chunk_boundaries": [
+          {
+            "end": 13.471,
+            "start": 0
+          }
+        ],
+        "chunking_method": "smart_silence_based",
+        "chunks_processed": 1,
+        "diarization_model": "nvidia/speakerverification_en_titanet_large",
+        "diarized_transcript": [
+          {
+            "duration": 13.471,
+            "end_time": 13.471,
+            "segment_timestamps": [],
+            "source_chunk": 1,
+            "speaker": "UNKNOWN",
+            "start_time": 0,
+            "text": "",
+            "word_timestamps": []
+          }
+        ],
+        "merged_text": "",
+        "model_used": "nvidia/parakeet-tdt-0.6b-v2",
+        "processing_method": "nemo_diarization_then_parakeet_transcription",
+        "segments_processed": 1,
+        "speakers_detected": 0
+      },
+      "status": "COMPLETED",
+      "workerId": "7k1i045bsqct2h"
+    }
+  ],
+  "summary": {
+    "total_chunks": 3,
+    "successful_jobs": 1,
+    "failed_jobs": 2
+  }
+}

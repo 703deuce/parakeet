@@ -17,15 +17,14 @@ RUN pip install --upgrade pip
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 
-# Install dependencies following official NeMo documentation
-# First install latest PyTorch, then NeMo as recommended
+# Install dependencies following official documentation
+# First install latest PyTorch, then other ML dependencies
 RUN pip install -U torch torchaudio torchvision
 RUN pip install -U nemo_toolkit[asr]
-RUN pip install runpod>=1.5.0
+RUN pip install -r requirements.txt
 
-# Copy the handler script and config files
+# Copy the handler script
 COPY handler.py .
-COPY diar_infer_general.yaml .
 
 # Set environment variables
 ENV PYTHONPATH=/app
