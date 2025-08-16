@@ -119,6 +119,8 @@ chunks/
 smart_chunks/
 *test*.py
 !test_diarization_api.py
+!test_payload_examples.json
+!curl_test_commands.sh
 debug*.py
 *debug*
 calculate_optimal_chunks.py

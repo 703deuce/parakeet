@@ -33,19 +33,12 @@ def load_model():
         return False
 
 def load_diarization_model():
-    """Load the NeMo Speaker Diarization model"""
-    global diarization_model
-    try:
-        import nemo.collections.asr as nemo_asr
-        logger.info("Loading NeMo Speaker Diarization model...")
-        diarization_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(
-            model_name="nvidia/speakerverification_en_titanet_large"
-        )
-        logger.info("Diarization model loaded successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Error loading diarization model: {str(e)}")
-        return False
+    """
+    Load NeMo diarization models on-demand
+    Note: We use ClusteringDiarizer which loads models automatically
+    """
+    logger.info("Diarization models will be loaded on-demand by ClusteringDiarizer")
+    return True
 
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
     """
@@ -58,8 +51,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         
         logger.info(f"Performing speaker diarization on audio: {audio_path}")
         
-        # Create a simple manifest for diarization
-        manifest_data = {
+        # Create a simple manifest for diarization (must be a list!)
+        manifest_data = [{
             "audio_filepath": audio_path,
             "offset": 0,
             "duration": None,
@@ -68,12 +61,14 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             "num_speakers": num_speakers,
             "rttm_filepath": None,
             "uem_filepath": None
-        }
+        }]
         
         # Create temporary manifest file
         manifest_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         import json
-        json.dump(manifest_data, manifest_file)
+        for item in manifest_data:
+            json.dump(item, manifest_file)
+            manifest_file.write('\n')
         manifest_file.close()
         
         # Configure diarization

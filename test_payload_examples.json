@@ -1,0 +1,32 @@
+{
+  "regular_transcription": {
+    "input": {
+      "audio_data": "BASE64_ENCODED_AUDIO_HERE",
+      "audio_format": "wav",
+      "include_timestamps": true,
+      "use_diarization": false,
+      "chunk_duration": 300
+    }
+  },
+  
+  "diarization_auto_speakers": {
+    "input": {
+      "audio_data": "BASE64_ENCODED_AUDIO_HERE", 
+      "audio_format": "wav",
+      "include_timestamps": true,
+      "use_diarization": true,
+      "chunk_duration": 300
+    }
+  },
+  
+  "diarization_specified_speakers": {
+    "input": {
+      "audio_data": "BASE64_ENCODED_AUDIO_HERE",
+      "audio_format": "wav", 
+      "include_timestamps": true,
+      "use_diarization": true,
+      "num_speakers": 2,
+      "chunk_duration": 300
+    }
+  }
+}
