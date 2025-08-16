@@ -521,94 +521,134 @@ def handler(job):
         temp_files_to_cleanup = [temp_audio_file.name]
         
         try:
-            if use_diarization:
-                # Speaker Diarization + Transcription Pipeline
-                logger.info("Starting speaker diarization pipeline...")
-                
-                # Step 1: Perform speaker diarization
-                diarized_segments = perform_speaker_diarization(temp_audio_file.name, num_speakers)
-                
-                if not diarized_segments:
-                    logger.warning("No diarization segments found, falling back to regular transcription")
-                    use_diarization = False
-                else:
-                    # Step 2: Transcribe each diarized segment
-                    diarized_results = []
-                    total_duration = 0
-                    
-                    for i, segment in enumerate(diarized_segments):
-                        start_time = segment['start']
-                        end_time = segment['end']
-                        speaker_id = segment['speaker']
-                        
-                        logger.info(f"Transcribing segment {i+1}/{len(diarized_segments)} - Speaker {speaker_id} ({start_time:.1f}s-{end_time:.1f}s)")
-                        
-                        # Extract audio segment
-                        segment_file = extract_audio_segment(temp_audio_file.name, start_time, end_time)
-                        if segment_file:
-                            temp_files_to_cleanup.append(segment_file)
-                            
-                            # Transcribe segment
-                            segment_result = transcribe_audio_chunk(segment_file, include_timestamps)
-                            
-                            # Adjust timestamps to absolute time
-                            if segment_result.get('word_timestamps'):
-                                for word_ts in segment_result['word_timestamps']:
-                                    word_ts['start'] += start_time
-                                    word_ts['end'] += start_time
-                            
-                            if segment_result.get('segment_timestamps'):
-                                for seg_ts in segment_result['segment_timestamps']:
-                                    seg_ts['start'] += start_time
-                                    seg_ts['end'] += start_time
-                            
-                            # Add speaker information
-                            diarized_results.append({
-                                'speaker': speaker_id,
-                                'start_time': start_time,
-                                'end_time': end_time,
-                                'duration': end_time - start_time,
-                                'text': segment_result.get('text', ''),
-                                'word_timestamps': segment_result.get('word_timestamps', []),
-                                'segment_timestamps': segment_result.get('segment_timestamps', [])
-                            })
-                            
-                            total_duration = max(total_duration, end_time)
-                    
-                    # Format diarized output
-                    final_result = {
-                        'diarized_transcript': diarized_results,
-                        'audio_duration_seconds': total_duration,
-                        'segments_processed': len(diarized_segments),
-                        'speakers_detected': len(set(seg['speaker'] for seg in diarized_segments)),
-                        'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
-                        'diarization_model': 'nvidia/speakerverification_en_titanet_large',
-                        'processing_method': 'speaker_diarization_with_transcription'
-                    }
-                    
-                    # Also provide merged text for convenience
-                    merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
-                    final_result['merged_text'] = merged_text
-                    
-                    logger.info(f"Diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
-                    
-                    return final_result
+            # Use the existing smart silence-based chunking for ALL modes
+            logger.info("Starting smart silence-based chunking...")
             
-            if not use_diarization:
-                # Regular Transcription Pipeline (existing logic)
-                logger.info("Starting regular transcription pipeline...")
+            # Determine optimal chunk duration based on format and RunPod 10MiB limit
+            if audio_format == 'mp3':
+                optimal_chunk_duration = 300  # 5 minutes for MP3
+                logger.info("Using 5-minute chunks for MP3 for optimal efficiency.")
+            elif audio_format == 'wav':
+                optimal_chunk_duration = 180  # 3 minutes for WAV  
+                logger.info("Using 3-minute chunks for WAV for optimal efficiency.")
+            else:
+                optimal_chunk_duration = chunk_duration
+                logger.info(f"Using default chunk duration of {optimal_chunk_duration}s for {audio_format}.")
+            
+            # Smart split audio at silence points (same for both modes)
+            chunk_info = smart_split_audio(temp_audio_file.name, audio_format, optimal_chunk_duration)
+            
+            # Extract file paths and timing info
+            chunk_files = [info[0] for info in chunk_info]
+            chunk_times = [(info[1], info[2]) for info in chunk_info]
+            
+            temp_files_to_cleanup.extend(chunk_files)
+            
+            # Calculate total duration
+            total_duration = chunk_times[-1][1] if chunk_times else 0
+            
+            if use_diarization:
+                # DIARIZATION MODE: Process each chunk with diarization + transcription
+                logger.info(f"Processing {len(chunk_files)} chunks with diarization...")
                 
-                # Smart split audio at silence points
-                chunk_info = smart_split_audio(temp_audio_file.name, audio_format, chunk_duration)
+                diarized_results = []
                 
-                # Extract file paths and timing info
-                chunk_files = [info[0] for info in chunk_info]
-                chunk_times = [(info[1], info[2]) for info in chunk_info]
+                for i, chunk_path in enumerate(chunk_files):
+                    chunk_start_time, chunk_end_time = chunk_times[i]
+                    logger.info(f"Processing chunk {i+1}/{len(chunk_files)} with diarization ({chunk_start_time:.1f}s-{chunk_end_time:.1f}s)")
+                    
+                    # Perform diarization on this chunk
+                    chunk_diarized_segments = perform_speaker_diarization(chunk_path, num_speakers)
+                    
+                    if chunk_diarized_segments:
+                        # Process each speaker segment within this chunk
+                        for segment in chunk_diarized_segments:
+                            segment_start = segment['start'] + chunk_start_time  # Adjust to absolute time
+                            segment_end = segment['end'] + chunk_start_time
+                            speaker_id = segment['speaker']
+                            
+                            # Extract the speaker segment from the chunk
+                            segment_file = extract_audio_segment(chunk_path, segment['start'], segment['end'])
+                            if segment_file:
+                                temp_files_to_cleanup.append(segment_file)
+                                
+                                # Transcribe this speaker segment
+                                segment_result = transcribe_audio_chunk(segment_file, include_timestamps)
+                                
+                                # Adjust timestamps to absolute time
+                                if segment_result.get('word_timestamps'):
+                                    for word_ts in segment_result['word_timestamps']:
+                                        word_ts['start'] += segment_start
+                                        word_ts['end'] += segment_start
+                                
+                                if segment_result.get('segment_timestamps'):
+                                    for seg_ts in segment_result['segment_timestamps']:
+                                        seg_ts['start'] += segment_start
+                                        seg_ts['end'] += segment_start
+                                
+                                # Add to results
+                                diarized_results.append({
+                                    'speaker': speaker_id,
+                                    'start_time': segment_start,
+                                    'end_time': segment_end,
+                                    'duration': segment_end - segment_start,
+                                    'text': segment_result.get('text', ''),
+                                    'word_timestamps': segment_result.get('word_timestamps', []),
+                                    'segment_timestamps': segment_result.get('segment_timestamps', []),
+                                    'source_chunk': i + 1
+                                })
+                    else:
+                        # Fallback: transcribe chunk normally if no diarization found
+                        logger.warning(f"No speakers detected in chunk {i+1}, transcribing normally")
+                        chunk_result = transcribe_audio_chunk(chunk_path, include_timestamps)
+                        
+                        # Adjust timestamps to absolute time
+                        if chunk_result.get('word_timestamps'):
+                            for word_ts in chunk_result['word_timestamps']:
+                                word_ts['start'] += chunk_start_time
+                                word_ts['end'] += chunk_start_time
+                        
+                        if chunk_result.get('segment_timestamps'):
+                            for seg_ts in chunk_result['segment_timestamps']:
+                                seg_ts['start'] += chunk_start_time
+                                seg_ts['end'] += chunk_start_time
+                        
+                        diarized_results.append({
+                            'speaker': 'UNKNOWN',
+                            'start_time': chunk_start_time,
+                            'end_time': chunk_end_time,
+                            'duration': chunk_end_time - chunk_start_time,
+                            'text': chunk_result.get('text', ''),
+                            'word_timestamps': chunk_result.get('word_timestamps', []),
+                            'segment_timestamps': chunk_result.get('segment_timestamps', []),
+                            'source_chunk': i + 1
+                        })
                 
-                temp_files_to_cleanup.extend(chunk_files)
+                # Format diarized output
+                final_result = {
+                    'diarized_transcript': diarized_results,
+                    'audio_duration_seconds': total_duration,
+                    'chunks_processed': len(chunk_files),
+                    'segments_processed': len(diarized_results),
+                    'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
+                    'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
+                    'diarization_model': 'nvidia/speakerverification_en_titanet_large',
+                    'processing_method': 'chunk_based_diarization_with_transcription',
+                    'chunking_method': 'smart_silence_based',
+                    'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
+                }
                 
-                # Calculate total duration
-                total_duration = chunk_times[-1][1] if chunk_times else 0
+                # Also provide merged text for convenience
+                merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
+                final_result['merged_text'] = merged_text
+                
+                logger.info(f"Chunk-based diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers across {len(chunk_files)} chunks")
+                
+                return final_result
+                
+            else:
+                # REGULAR TRANSCRIPTION MODE: Process chunks normally
+                logger.info(f"Processing {len(chunk_files)} chunks with regular transcription...")
                 
                 # Transcribe each chunk
                 chunk_results = []
