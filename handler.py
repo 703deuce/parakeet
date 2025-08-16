@@ -131,12 +131,25 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         logger.info(f"Device value: {diar_cfg.diarizer.get('device', 'MISSING!')}")
         logger.info(f"Oracle VAD value: {diar_cfg.diarizer.get('oracle_vad', 'MISSING!')}")
         
-        # CRITICAL: Print the pretty config to see exact structure
+        # CRITICAL: Verify we have a DictConfig, not a plain dict
+        from omegaconf import DictConfig
+        logger.info(f"Is DictConfig: {isinstance(diar_cfg, DictConfig)}")
+        
+        # CRITICAL: Print the pretty config to see exact structure (only if DictConfig)
         logger.info("=== NEMO CONFIG PRETTY OUTPUT ===")
-        logger.info(diar_cfg.pretty())
+        if isinstance(diar_cfg, DictConfig):
+            logger.info(diar_cfg.pretty())
+        else:
+            logger.warning("WARNING: diar_cfg is NOT a DictConfig! This will cause NeMo errors!")
+            import yaml
+            logger.info(yaml.dump(diar_cfg))
         logger.info("=== END PRETTY OUTPUT ===")
         
         logger.info("=== END CONFIG DEBUG ===")
+        
+        # CRITICAL: Ensure we pass the OmegaConf DictConfig directly to NeMo
+        # NEVER convert to dict - this breaks NeMo's struct validation
+        logger.info(f"Passing config type {type(diar_cfg)} to ClusteringDiarizer")
         
         # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
@@ -783,6 +796,7 @@ if __name__ == "__main__":
         logger.info("FIXED: Added missing oracle_vad key to NeMo diarization config!")
         logger.info("DEBUG: Added NeMo config structure verification to diagnose nesting issues!")
         logger.info("DEBUG: Added diar_cfg.pretty() output to see exact NeMo config format!")
+        logger.info("CRITICAL FIX: Ensure OmegaConf DictConfig is passed directly to NeMo (never convert to dict)!")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
