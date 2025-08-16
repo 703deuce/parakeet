@@ -79,6 +79,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             'diarizer': {
                 'manifest_filepath': manifest_file.name,
                 'out_dir': tempfile.gettempdir(),
+                'device': 'cuda',  # CRITICAL: Specify GPU device for NeMo
                 'oracle_num_speakers': num_speakers is not None,  # Use oracle if num_speakers provided
                 'min_num_speakers': min_speakers,  # CRITICAL: Force minimum speakers
                 'max_num_speakers': max_speakers,  # CRITICAL: Force maximum speakers
@@ -121,6 +122,15 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         })
         
         logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
+        
+        # DEBUG: Print the exact config structure to verify nesting
+        logger.info("=== NEMO CONFIG STRUCTURE DEBUG ===")
+        logger.info(f"Config type: {type(diar_cfg)}")
+        logger.info(f"Config keys: {list(diar_cfg.keys())}")
+        logger.info(f"Diarizer keys: {list(diar_cfg.diarizer.keys())}")
+        logger.info(f"Device value: {diar_cfg.diarizer.get('device', 'MISSING!')}")
+        logger.info(f"Oracle VAD value: {diar_cfg.diarizer.get('oracle_vad', 'MISSING!')}")
+        logger.info("=== END CONFIG DEBUG ===")
         
         # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
@@ -765,6 +775,7 @@ if __name__ == "__main__":
         logger.info("FIXED: Now using proper NeMo ClusteringDiarizer pipeline for real speaker labels (spk0, spk1, etc.)")
         logger.info("CRITICAL FIX: Added min_num_speakers and max_num_speakers to force speaker clustering!")
         logger.info("FIXED: Added missing oracle_vad key to NeMo diarization config!")
+        logger.info("DEBUG: Added NeMo config structure verification to diagnose nesting issues!")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
