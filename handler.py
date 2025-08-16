@@ -42,13 +42,10 @@ def load_diarization_model():
 
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
     """
-    Perform speaker diarization on audio file
+    Perform speaker diarization on audio file using NeMo ClusteringDiarizer
     Returns list of segments with speaker labels and timestamps
     """
     try:
-        from nemo.collections.asr.parts.utils.speaker_utils import get_uniq_id_list_from_manifest
-        from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
-        
         logger.info(f"Performing speaker diarization on audio: {audio_path}")
         
         # Create a simple manifest for diarization (must be a list!)
@@ -71,12 +68,14 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             manifest_file.write('\n')
         manifest_file.close()
         
-        # Configure diarization
+        # Configure diarization with proper NeMo pipeline
         from omegaconf import OmegaConf
         diar_cfg = OmegaConf.create({
             'diarizer': {
                 'manifest_filepath': manifest_file.name,
                 'out_dir': tempfile.gettempdir(),
+                'oracle_num_speakers': num_speakers is not None,  # Use oracle if num_speakers provided
+                'max_num_speakers': num_speakers if num_speakers else 8,
                 'speaker_embeddings': {
                     'model_path': 'nvidia/speakerverification_en_titanet_large',
                     'parameters': {
@@ -88,8 +87,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 },
                 'clustering': {
                     'parameters': {
-                        'oracle_num_speakers': False,
-                        'max_num_speakers': 8,
+                        'oracle_num_speakers': num_speakers is not None,
+                        'max_num_speakers': num_speakers if num_speakers else 8,
                         'enhanced_count_thres': 40,
                         'max_rp_threshold': 0.25,
                         'sparse_search_volume': 30
@@ -113,24 +112,48 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             }
         })
         
-        # Run diarization
+        # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
+        logger.info(f"Initializing ClusteringDiarizer with config: {diar_cfg}")
         diarizer = ClusteringDiarizer(cfg=diar_cfg)
+        
+        logger.info("Starting diarization process...")
         diarizer.diarize()
         
-        # Parse results
-        rttm_file = os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm")
-        segments = []
+        # Parse results from RTTM file
+        # NeMo might create RTTM with different naming conventions
+        possible_rttm_files = [
+            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path)}.rttm"),
+            os.path.join(tempfile.gettempdir(), f"{os.path.basename(audio_path).split('.')[0]}.rttm"),
+            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path)}.rttm"),
+            os.path.join(tempfile.gettempdir(), "pred_rttms", f"{os.path.basename(audio_path).split('.')[0]}.rttm")
+        ]
         
-        if os.path.exists(rttm_file):
+        segments = []
+        rttm_file = None
+        
+        # Find the actual RTTM file
+        for rttm_path in possible_rttm_files:
+            if os.path.exists(rttm_path):
+                rttm_file = rttm_path
+                logger.info(f"Found RTTM file: {rttm_file}")
+                break
+        
+        if rttm_file:
             with open(rttm_file, 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
+                for line_num, line in enumerate(f):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                        
+                    parts = line.split()
                     if len(parts) >= 8:
                         start_time = float(parts[3])
                         duration = float(parts[4])
                         end_time = start_time + duration
                         speaker_id = parts[7]
+                        
+                        logger.info(f"RTTM line {line_num}: speaker={speaker_id}, start={start_time:.2f}s, end={end_time:.2f}s")
                         
                         segments.append({
                             'start': start_time,
@@ -138,20 +161,44 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                             'speaker': speaker_id,
                             'duration': duration
                         })
+        else:
+            logger.warning(f"RTTM file not found. Checked paths: {possible_rttm_files}")
+            # Check what files are in the output directory
+            out_dir = tempfile.gettempdir()
+            logger.info(f"Files in output directory {out_dir}:")
+            try:
+                for file in os.listdir(out_dir):
+                    if 'rttm' in file.lower() or os.path.basename(audio_path) in file:
+                        logger.info(f"  Found: {file}")
+                
+                # Also check for pred_rttms subdirectory
+                pred_rttm_dir = os.path.join(out_dir, "pred_rttms")
+                if os.path.exists(pred_rttm_dir):
+                    logger.info(f"Files in pred_rttms directory:")
+                    for file in os.listdir(pred_rttm_dir):
+                        logger.info(f"  Found: {file}")
+            except Exception as e:
+                logger.error(f"Error listing output directory: {e}")
         
         # Cleanup temporary files
         try:
             os.unlink(manifest_file.name)
             if os.path.exists(rttm_file):
                 os.unlink(rttm_file)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Error cleaning up temp files: {e}")
         
         logger.info(f"Diarization completed: {len(segments)} segments found")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        
         return segments
         
     except Exception as e:
         logger.error(f"Error in speaker diarization: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
@@ -697,6 +744,7 @@ if __name__ == "__main__":
         # load_diarization_model()
         
         logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
+        logger.info("FIXED: Now using proper NeMo ClusteringDiarizer pipeline for real speaker labels (spk0, spk1, etc.)")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
