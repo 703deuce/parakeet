@@ -93,37 +93,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         
         logger.info(f"DIARIZATION CONFIG: min_speakers={min_speakers}, max_speakers={max_speakers}, oracle={num_speakers is not None}")
         
-        # DEBUG: Print the exact config structure to verify nesting
-        logger.info("=== NEMO CONFIG STRUCTURE DEBUG ===")
-        logger.info(f"Config type: {type(diar_cfg)}")
-        logger.info(f"Config keys: {list(diar_cfg.keys())}")
-        logger.info(f"Diarizer keys: {list(diar_cfg.diarizer.keys())}")
-        logger.info(f"Device value: {diar_cfg.diarizer.get('device', 'MISSING!')}")
-        logger.info(f"Oracle VAD value: {diar_cfg.diarizer.get('oracle_vad', 'MISSING!')}")
-        
-        # CRITICAL: Verify we have a DictConfig, not a plain dict
-        from omegaconf import DictConfig
-        logger.info(f"Is DictConfig: {isinstance(diar_cfg, DictConfig)}")
-        
-        # CRITICAL: Print the pretty config to see exact structure (only if DictConfig)
-        logger.info("=== NEMO CONFIG PRETTY OUTPUT ===")
-        if isinstance(diar_cfg, DictConfig):
-            logger.info(diar_cfg.pretty())
-        else:
-            logger.warning("WARNING: diar_cfg is NOT a DictConfig! This will cause NeMo errors!")
-            import yaml
-            logger.info(yaml.dump(diar_cfg))
-        logger.info("=== END PRETTY OUTPUT ===")
-        
-        logger.info("=== END CONFIG DEBUG ===")
-        
-        # CRITICAL: Ensure we pass the OmegaConf DictConfig directly to NeMo
-        # NEVER convert to dict - this breaks NeMo's struct validation
-        logger.info(f"Passing config type {type(diar_cfg)} to ClusteringDiarizer")
-        
         # Run diarization with ClusteringDiarizer
         from nemo.collections.asr.models import ClusteringDiarizer
-        logger.info(f"Initializing ClusteringDiarizer with config: {diar_cfg}")
+        logger.info(f"Initializing ClusteringDiarizer with official NeMo config")
         diarizer = ClusteringDiarizer(cfg=diar_cfg)
         
         logger.info("Starting diarization process...")
@@ -761,12 +733,7 @@ if __name__ == "__main__":
         # load_diarization_model()
         
         logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
-        logger.info("FIXED: Now using proper NeMo ClusteringDiarizer pipeline for real speaker labels (spk0, spk1, etc.)")
-        logger.info("CRITICAL FIX: Added min_num_speakers and max_num_speakers to force speaker clustering!")
-        logger.info("FIXED: Added missing oracle_vad key to NeMo diarization config!")
-        logger.info("DEBUG: Added NeMo config structure verification to diagnose nesting issues!")
-        logger.info("DEBUG: Added diar_cfg.pretty() output to see exact NeMo config format!")
-        logger.info("CRITICAL FIX: Ensure OmegaConf DictConfig is passed directly to NeMo (never convert to dict)!")
+        logger.info("IMPROVED: Now using official NeMo diarization config for proven compatibility")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
