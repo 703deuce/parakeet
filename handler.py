@@ -82,6 +82,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 'oracle_num_speakers': num_speakers is not None,  # Use oracle if num_speakers provided
                 'min_num_speakers': min_speakers,  # CRITICAL: Force minimum speakers
                 'max_num_speakers': max_speakers,  # CRITICAL: Force maximum speakers
+                'oracle_vad': False,  # CRITICAL: Add missing oracle_vad key
                 'speaker_embeddings': {
                     'model_path': 'nvidia/speakerverification_en_titanet_large',
                     'parameters': {
@@ -763,6 +764,7 @@ if __name__ == "__main__":
         logger.info("Starting RunPod serverless handler with smart chunking and optional diarization...")
         logger.info("FIXED: Now using proper NeMo ClusteringDiarizer pipeline for real speaker labels (spk0, spk1, etc.)")
         logger.info("CRITICAL FIX: Added min_num_speakers and max_num_speakers to force speaker clustering!")
+        logger.info("FIXED: Added missing oracle_vad key to NeMo diarization config!")
         runpod.serverless.start({"handler": handler})
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
