@@ -15,5 +15,6 @@ sentencepiece
 scikit-learn
 matplotlib
 soxr
+jiwer
 pydub
 pyannote.audio

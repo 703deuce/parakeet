@@ -21,7 +21,7 @@ RUN pip install numpy soundfile
 RUN pip install hydra-core omegaconf pyyaml
 RUN pip install lhotse
 RUN pip install tqdm requests transformers
-RUN pip install sentencepiece scikit-learn matplotlib soxr
+RUN pip install sentencepiece scikit-learn matplotlib soxr jiwer
 RUN pip install nemo_toolkit
 RUN pip install pyannote.audio
 RUN pip install pydub
