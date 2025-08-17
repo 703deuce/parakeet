@@ -8,6 +8,7 @@ import tempfile
 import os
 import requests
 import mimetypes
+import gc
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
 import logging
@@ -21,6 +22,43 @@ logger = logging.getLogger(__name__)
 # Global model variables
 model = None
 diarization_model = None
+
+def clear_gpu_memory():
+    """Clear GPU memory and run garbage collection"""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info("🧹 GPU memory cache cleared")
+        
+        # Run Python garbage collection
+        gc.collect()
+        logger.info("🧹 Python garbage collection completed")
+        
+        # Log memory usage if available
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            memory_reserved = torch.cuda.memory_reserved() / 1024**3   # GB
+            logger.info(f"💾 GPU Memory - Allocated: {memory_allocated:.2f}GB, Reserved: {memory_reserved:.2f}GB")
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Memory cleanup error: {str(e)}")
+
+def ensure_cuda_available():
+    """Check and log CUDA availability"""
+    try:
+        cuda_available = torch.cuda.is_available()
+        if cuda_available:
+            device_count = torch.cuda.device_count()
+            current_device = torch.cuda.current_device()
+            device_name = torch.cuda.get_device_name(current_device)
+            logger.info(f"🚀 CUDA available: {device_count} device(s), using: {device_name}")
+        else:
+            logger.warning("⚠️ CUDA not available, using CPU")
+        return cuda_available
+    except Exception as e:
+        logger.error(f"❌ CUDA check error: {str(e)}")
+        return False
 
 # Firebase configuration - your provided config
 FIREBASE_CONFIG = {
@@ -37,12 +75,23 @@ def load_model():
     """Load the NVIDIA Parakeet model"""
     global model
     try:
+        # Clear memory before loading
+        clear_gpu_memory()
+        
+        # Check CUDA availability
+        ensure_cuda_available()
+        
         import nemo.collections.asr as nemo_asr
         logger.info("Loading NVIDIA Parakeet TDT 0.6B v3 model...")
         model = nemo_asr.models.ASRModel.from_pretrained(
             model_name="nvidia/parakeet-tdt-0.6b-v3"
         )
         logger.info("Model loaded successfully")
+        
+        # Move model to GPU if available
+        if torch.cuda.is_available():
+            model = model.cuda()
+            logger.info("🚀 Model moved to GPU")
         
         # Optimize for long audio processing (up to 3 hours with local attention)
         optimize_for_long_audio()
@@ -168,6 +217,9 @@ def load_diarization_model(hf_token=None):
     """
     global diarization_model
     try:
+        # Clear memory before loading diarization model
+        clear_gpu_memory()
+        
         from pyannote.audio import Pipeline
         import torch
         logger.info("Loading pyannote.audio speaker diarization pipeline...")
@@ -187,10 +239,13 @@ def load_diarization_model(hf_token=None):
             
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
-            logger.info("Moving pyannote pipeline to GPU")
+            logger.info("🚀 Moving pyannote pipeline to GPU")
             diarization_model.to(torch.device("cuda"))
         else:
-            logger.warning("CUDA not available, using CPU for diarization")
+            logger.warning("⚠️ CUDA not available, using CPU for diarization")
+        
+        # Clear memory after loading
+        clear_gpu_memory()
             
         logger.info("Pyannote diarization pipeline loaded successfully")
         return True
@@ -1332,6 +1387,10 @@ def handler(job):
                     })
                     
                     logger.info(f"🎉 Firebase URL workflow completed successfully!")
+                    
+                    # Clear memory after processing
+                    clear_gpu_memory()
+                    
                     return result
                     
                 except Exception as e:
@@ -1468,6 +1527,10 @@ def handler(job):
                 })
                 
                 logger.info(f"🎉 DIRECT Firebase workflow completed successfully!")
+                
+                # Clear memory after processing
+                clear_gpu_memory()
+                
                 return result
                 
             except Exception as e:
@@ -1535,6 +1598,10 @@ def handler(job):
 
 # Initialize model when the container starts
 if __name__ == "__main__":
+    # Clear memory and check CUDA at startup
+    clear_gpu_memory()
+    ensure_cuda_available()
+    
     logger.info("Initializing NVIDIA Parakeet TDT 0.6B v3 model...")
     if load_model():
         logger.info("Parakeet model loaded successfully")
