@@ -6,6 +6,9 @@ import base64
 import io
 import tempfile
 import os
+import requests
+import mimetypes
+from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
 import logging
 
@@ -612,6 +615,292 @@ def merge_smart_transcription_results(chunk_results: List[Dict[str, Any]], chunk
         'char_timestamps': merged_char_timestamps
     }
 
+def download_from_firebase(firebase_url: str) -> str:
+    """
+    Download audio file from Firebase Storage URL
+    Returns path to downloaded temporary file
+    """
+    try:
+        logger.info(f"🔽 Downloading audio from Firebase: {firebase_url}")
+        
+        # Parse URL to get file info
+        parsed_url = urlparse(firebase_url)
+        
+        # Determine file extension from URL or Content-Type
+        file_extension = None
+        if '.' in parsed_url.path:
+            file_extension = os.path.splitext(parsed_url.path)[1]
+        
+        # Download the file
+        response = requests.get(firebase_url, stream=True)
+        response.raise_for_status()
+        
+        # Get file extension from Content-Type if not found in URL
+        if not file_extension:
+            content_type = response.headers.get('content-type', '')
+            file_extension = mimetypes.guess_extension(content_type) or '.wav'
+        
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
+        
+        # Download with progress logging
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+        chunk_size = 8192
+        
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if chunk:
+                temp_file.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0:
+                    progress = (downloaded / total_size) * 100
+                    if downloaded % (chunk_size * 100) == 0:  # Log every 100 chunks
+                        logger.info(f"📥 Download progress: {progress:.1f}% ({downloaded}/{total_size} bytes)")
+        
+        temp_file.close()
+        
+        # Verify file was downloaded
+        file_size = os.path.getsize(temp_file.name)
+        logger.info(f"✅ Firebase download complete: {temp_file.name} ({file_size} bytes, {file_size/1024/1024:.1f} MB)")
+        
+        return temp_file.name
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to download from Firebase: {str(e)}")
+        raise Exception(f"Firebase download failed: {str(e)}")
+
+def process_firebase_audio(firebase_url: str, use_diarization: bool = True, include_timestamps: bool = True, 
+                          num_speakers: int = None, hf_token: str = None) -> Dict[str, Any]:
+    """
+    Process audio directly from Firebase Storage (no chunking needed!)
+    This is the main processing function for large files
+    """
+    temp_files_to_cleanup = []
+    
+    try:
+        # Step 1: Download audio from Firebase
+        audio_path = download_from_firebase(firebase_url)
+        temp_files_to_cleanup.append(audio_path)
+        
+        # Get audio duration for metadata
+        try:
+            waveform, sample_rate = torchaudio.load(audio_path)
+            total_duration = waveform.shape[1] / sample_rate
+            logger.info(f"🎵 Audio loaded: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
+        except Exception as e:
+            logger.warning(f"Could not get audio duration: {str(e)}")
+            total_duration = 0
+        
+        if use_diarization:
+            # Load diarization model if needed
+            if diarization_model is None and hf_token:
+                logger.info("Loading pyannote diarization model for Firebase processing...")
+                if not load_diarization_model(hf_token):
+                    return {"error": "Failed to load diarization model with provided HF token"}
+            elif diarization_model is None:
+                return {"error": "Diarization requested but no HF token provided and model not loaded"}
+            
+            # FIREBASE WORKFLOW: Single file processing (no chunking!)
+            logger.info("🚀 Starting Firebase workflow: Diarization → Transcription → Combine")
+            
+            # Step 2: Run diarization on the WHOLE audio file
+            logger.info("  Step 1: Diarization on complete audio file")
+            diarized_segments = perform_speaker_diarization(audio_path, num_speakers)
+            
+            # Step 3: Run transcription on the WHOLE audio file  
+            logger.info("  Step 2: Transcription on complete audio file")
+            transcription_result = transcribe_audio_chunk(audio_path, include_timestamps=True)
+            
+            # Step 4: Match timestamps to assign speakers
+            logger.info("  Step 3: Matching timestamps for speaker assignment")
+            
+            if diarized_segments and transcription_result.get('text'):
+                # We have both diarization and transcription - now match them
+                logger.info(f"    Found {len(diarized_segments)} speaker segments and transcription text")
+                
+                # Use segment-level timestamps for better matching, fallback to word-level
+                transcript_segments = transcription_result.get('segment_timestamps', [])
+                
+                # If no segment timestamps or empty, try to use word timestamps
+                if not transcript_segments and transcription_result.get('word_timestamps'):
+                    logger.info(f"    No segment timestamps, using word-level timestamps for matching")
+                    word_timestamps = transcription_result['word_timestamps']
+                    
+                    # Group words into segments (combine words with small gaps)
+                    transcript_segments = []
+                    if word_timestamps:
+                        current_segment = {
+                            'start': word_timestamps[0]['start'],
+                            'end': word_timestamps[0]['end'],
+                            'text': word_timestamps[0]['word']
+                        }
+                        
+                        for word in word_timestamps[1:]:
+                            # If gap is less than 1 second, combine with current segment
+                            if word['start'] - current_segment['end'] < 1.0:
+                                current_segment['end'] = word['end']
+                                current_segment['text'] += ' ' + word['word']
+                            else:
+                                # Start new segment
+                                transcript_segments.append(current_segment)
+                                current_segment = {
+                                    'start': word['start'],
+                                    'end': word['end'],
+                                    'text': word['word']
+                                }
+                        
+                        # Don't forget the last segment
+                        transcript_segments.append(current_segment)
+                
+                diarized_results = []
+                
+                if transcript_segments:
+                    logger.info(f"    Matching {len(transcript_segments)} transcript segments to speaker segments")
+                    
+                    for seg in transcript_segments:
+                        # Safe key access with error handling
+                        try:
+                            seg_start = seg.get('start', 0)
+                            seg_end = seg.get('end', 0) 
+                            seg_text = seg.get('text', '')
+                        except Exception as seg_error:
+                            logger.error(f"    ❌ Error accessing segment keys: {seg_error}, segment: {seg}")
+                            continue
+                        
+                        # Find which speaker segment this transcript segment overlaps with
+                        assigned_speaker = 'UNKNOWN'
+                        max_overlap = 0
+                        
+                        for spk_seg in diarized_segments:
+                            spk_start = spk_seg['start']
+                            spk_end = spk_seg['end']
+                            
+                            # Calculate overlap
+                            overlap_start = max(seg_start, spk_start)
+                            overlap_end = min(seg_end, spk_end)
+                            overlap = max(0, overlap_end - overlap_start)
+                            
+                            if overlap > max_overlap:
+                                max_overlap = overlap
+                                assigned_speaker = spk_seg['speaker']
+                        
+                        # Only assign speaker if there's meaningful overlap
+                        if max_overlap > 0.1:  # At least 100ms overlap
+                            diarized_results.append({
+                                'speaker': assigned_speaker,
+                                'start_time': seg_start,
+                                'end_time': seg_end,
+                                'duration': seg_end - seg_start,
+                                'text': seg_text,
+                                'word_timestamps': [],
+                                'segment_timestamps': [seg],
+                                'source_chunk': 1,  # Single file
+                                'overlap_duration': max_overlap
+                            })
+                        else:
+                            # No good overlap, mark as unknown
+                            diarized_results.append({
+                                'speaker': 'UNKNOWN',
+                                'start_time': seg_start,
+                                'end_time': seg_end,
+                                'duration': seg_end - seg_start,
+                                'text': seg_text,
+                                'word_timestamps': [],
+                                'segment_timestamps': [seg],
+                                'source_chunk': 1,
+                                'overlap_duration': 0
+                            })
+                    
+                    logger.info(f"    ✅ Matched {len(transcript_segments)} segments")
+                
+                else:
+                    logger.warning(f"    ❌ No usable timestamps found")
+                    # Fallback: use the whole file text with first speaker
+                    first_speaker = diarized_segments[0]['speaker'] if diarized_segments else 'UNKNOWN'
+                    diarized_results.append({
+                        'speaker': first_speaker,
+                        'start_time': 0,
+                        'end_time': total_duration,
+                        'duration': total_duration,
+                        'text': transcription_result.get('text', ''),
+                        'word_timestamps': transcription_result.get('word_timestamps', []),
+                        'segment_timestamps': transcription_result.get('segment_timestamps', []),
+                        'source_chunk': 1,
+                        'fallback_reason': 'no_usable_timestamps'
+                    })
+                    logger.info(f"    ⚠️  Using whole file with speaker {first_speaker} (no timestamps)")
+            
+            else:
+                # Fallback: transcribe normally if diarization failed
+                logger.warning(f"No speakers detected or transcription failed, transcribing normally")
+                diarized_results = [{
+                    'speaker': 'UNKNOWN',
+                    'start_time': 0,
+                    'end_time': total_duration,
+                    'duration': total_duration,
+                    'text': transcription_result.get('text', ''),
+                    'word_timestamps': transcription_result.get('word_timestamps', []),
+                    'segment_timestamps': transcription_result.get('segment_timestamps', []),
+                    'source_chunk': 1
+                }]
+            
+            # Format diarized output
+            final_result = {
+                'diarized_transcript': diarized_results,
+                'audio_duration_seconds': total_duration,
+                'chunks_processed': 1,  # Single file processing!
+                'segments_processed': len(diarized_results),
+                'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
+                'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+                'diarization_model': 'pyannote/speaker-diarization-3.1',
+                'processing_method': 'firebase_single_file_diarization',
+                'chunking_method': 'none_firebase_download',
+                'streaming_config': None,
+                'long_audio_optimization': 'local_attention_enabled',
+                'firebase_source': True
+            }
+            
+            # Also provide merged text for convenience
+            merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
+            final_result['merged_text'] = merged_text
+            
+            logger.info(f"🎉 Firebase diarization workflow completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
+            
+            return final_result
+            
+        else:
+            # REGULAR TRANSCRIPTION MODE: Process single file normally
+            logger.info(f"Processing Firebase audio with regular transcription...")
+            
+            # Transcribe the whole file
+            transcription_result = transcribe_audio_chunk(audio_path, include_timestamps)
+            
+            # Add metadata
+            transcription_result.update({
+                'audio_duration_seconds': total_duration,
+                'chunks_processed': 1,
+                'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+                'chunking_method': 'none_firebase_download',
+                'processing_method': 'firebase_single_file_transcription',
+                'streaming_config': None,
+                'long_audio_optimization': 'local_attention_enabled',
+                'firebase_source': True
+            })
+            
+            logger.info(f"Firebase transcription completed: {len(transcription_result.get('word_timestamps', []))} words")
+            
+            return transcription_result
+            
+    except Exception as e:
+        logger.error(f"❌ Error in Firebase processing: {str(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return {"error": f"Firebase processing failed: {str(e)}"}
+        
+    finally:
+        # Clean up temporary files
+        cleanup_temp_files(temp_files_to_cleanup)
+
 def cleanup_temp_files(file_paths: List[str]):
     """Clean up temporary files"""
     for file_path in file_paths:
@@ -626,6 +915,25 @@ def handler(job):
     RunPod handler function for audio transcription with smart silence-based chunking and optional speaker diarization
     
     Expected input format:
+    
+    OPTION 1 - Firebase Storage (recommended for large files):
+    {
+        "input": {
+            "firebase_url": "https://firebasestorage.googleapis.com/...",  # Firebase Storage download URL
+            "processing_mode": "firebase_download",  # Use Firebase workflow
+            "audio_format": "auto",  # Auto-detect from file
+            "include_timestamps": true,  # Optional: include word/segment timestamps
+            "use_diarization": true,  # Optional: enable speaker diarization
+            "num_speakers": null,  # Optional: expected number of speakers (null for auto-detection)
+            "hf_token": "hf_xxx",  # Required for diarization: HuggingFace token for pyannote.audio access
+            "streaming_mode": false,  # Optional: enable streaming mode for real-time processing
+            "streaming_chunk_sec": 2.0,  # Optional: streaming chunk size in seconds (default 2.0)
+            "streaming_left_context_sec": 10.0,  # Optional: left context for streaming (default 10.0)
+            "streaming_right_context_sec": 2.0  # Optional: right context for streaming (default 2.0)
+        }
+    }
+    
+    OPTION 2 - Direct upload (legacy, for files < 10MiB):
     {
         "input": {
             "audio_data": "base64_encoded_audio_data",  # Base64 encoded audio file
@@ -645,26 +953,84 @@ def handler(job):
     try:
         job_input = job["input"]
         
-        # Validate required inputs
-        if "audio_data" not in job_input:
-            return {"error": "Missing required parameter: audio_data"}
+        # Check for Firebase mode vs legacy mode
+        firebase_url = job_input.get("firebase_url")
+        processing_mode = job_input.get("processing_mode", "")
         
-        # Get parameters
-        audio_data = job_input["audio_data"]
-        audio_format = job_input.get("audio_format", "wav")
-        include_timestamps = job_input.get("include_timestamps", False)
-        chunk_duration = job_input.get("chunk_duration", 300)  # 5 minutes default
-        use_diarization = job_input.get("use_diarization", False)
-        num_speakers = job_input.get("num_speakers", None)
-        hf_token = job_input.get("hf_token", None)
-        
-        # Streaming mode parameters (Parakeet v3 feature)
-        streaming_mode = job_input.get("streaming_mode", False)
-        streaming_chunk_sec = job_input.get("streaming_chunk_sec", 2.0)
-        streaming_left_context_sec = job_input.get("streaming_left_context_sec", 10.0)
-        streaming_right_context_sec = job_input.get("streaming_right_context_sec", 2.0)
-        
-        logger.info(f"Processing transcription request: format={audio_format}, timestamps={include_timestamps}, chunk_duration={chunk_duration}s, diarization={use_diarization}, streaming={streaming_mode}")
+        if firebase_url or processing_mode == "firebase_download":
+            # 🔥 FIREBASE STORAGE MODE: Direct download and process (no chunking!)
+            logger.info("🔥 Firebase Storage mode detected - processing large files without chunking")
+            
+            if not firebase_url:
+                return {"error": "Firebase mode requires firebase_url parameter"}
+            
+            # Get Firebase-specific parameters
+            use_diarization = job_input.get("use_diarization", True)  # Default to True for Firebase
+            include_timestamps = job_input.get("include_timestamps", True)
+            num_speakers = job_input.get("num_speakers", None)
+            hf_token = job_input.get("hf_token", None)
+            
+            # Streaming mode parameters (same as legacy)
+            streaming_mode = job_input.get("streaming_mode", False)
+            streaming_chunk_sec = job_input.get("streaming_chunk_sec", 2.0)
+            streaming_left_context_sec = job_input.get("streaming_left_context_sec", 10.0)
+            streaming_right_context_sec = job_input.get("streaming_right_context_sec", 2.0)
+            
+            logger.info(f"Firebase processing: url={firebase_url[:50]}..., diarization={use_diarization}, timestamps={include_timestamps}, streaming={streaming_mode}")
+            
+            # Configure streaming mode if requested
+            streaming_config = None
+            if streaming_mode:
+                logger.info("🚀 Configuring Parakeet v3 streaming mode for Firebase processing...")
+                streaming_config = configure_streaming_mode(
+                    chunk_size_sec=streaming_chunk_sec,
+                    left_context_sec=streaming_left_context_sec,
+                    right_context_sec=streaming_right_context_sec
+                )
+                if streaming_config:
+                    logger.info(f"✅ Streaming mode active: {streaming_config}")
+                else:
+                    logger.warning("⚠️ Failed to configure streaming mode, continuing with standard processing")
+            
+            # Process Firebase audio directly
+            result = process_firebase_audio(
+                firebase_url=firebase_url,
+                use_diarization=use_diarization,
+                include_timestamps=include_timestamps,
+                num_speakers=num_speakers,
+                hf_token=hf_token
+            )
+            
+            # Add streaming config to result
+            if 'streaming_config' not in result:
+                result['streaming_config'] = streaming_config
+            
+            return result
+            
+        else:
+            # 📦 LEGACY MODE: Base64 upload with chunking (for files < 10MiB)
+            logger.info("📦 Legacy base64 mode detected - using chunking for 10MiB limit")
+            
+            # Validate required inputs for legacy mode
+            if "audio_data" not in job_input:
+                return {"error": "Missing required parameter: audio_data (or use firebase_url for large files)"}
+            
+            # Get parameters for legacy mode
+            audio_data = job_input["audio_data"]
+            audio_format = job_input.get("audio_format", "wav")
+            include_timestamps = job_input.get("include_timestamps", False)
+            chunk_duration = job_input.get("chunk_duration", 300)  # 5 minutes default
+            use_diarization = job_input.get("use_diarization", False)
+            num_speakers = job_input.get("num_speakers", None)
+            hf_token = job_input.get("hf_token", None)
+            
+            # Streaming mode parameters (Parakeet v3 feature)
+            streaming_mode = job_input.get("streaming_mode", False)
+            streaming_chunk_sec = job_input.get("streaming_chunk_sec", 2.0)
+            streaming_left_context_sec = job_input.get("streaming_left_context_sec", 10.0)
+            streaming_right_context_sec = job_input.get("streaming_right_context_sec", 2.0)
+            
+            logger.info(f"Processing transcription request: format={audio_format}, timestamps={include_timestamps}, chunk_duration={chunk_duration}s, diarization={use_diarization}, streaming={streaming_mode}")
         
         # Configure streaming mode if requested
         streaming_config = None

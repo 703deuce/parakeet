@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Audio Upload → RunPod Diarization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .status {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .config-section {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        
+        .form-group {
+            margin: 15px 0;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+        
+        .results {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .transcript-segment {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-left: 4px solid #007bff;
+            border-radius: 0 5px 5px 0;
+        }
+        
+        .speaker-label {
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        .timestamp {
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎭 Firebase Audio Upload → RunPod Diarization</h1>
+        <p>Upload audio files to Firebase Storage, then process with Parakeet v3 + pyannote.audio for speaker diarization</p>
+        
+        <!-- File Upload Section -->
+        <div class="upload-area" id="uploadArea">
+            <p>📁 Drop audio file here or click to select</p>
+            <p style="color: #666; font-size: 14px;">Supports: MP3, WAV, FLAC, MP4 (any size - no chunking needed!)</p>
+            <input type="file" id="fileInput" accept="audio/*" style="display: none;">
+        </div>
+        
+        <!-- Configuration Section -->
+        <div class="config-section">
+            <h3>🔧 Processing Configuration</h3>
+            
+            <div class="form-group">
+                <label for="runpodApiKey">RunPod API Key:</label>
+                <input type="password" id="runpodApiKey" placeholder="Your RunPod API key">
+            </div>
+            
+            <div class="form-group">
+                <label for="runpodEndpoint">RunPod Endpoint ID:</label>
+                <input type="text" id="runpodEndpoint" placeholder="Your RunPod endpoint ID">
+            </div>
+            
+            <div class="form-group">
+                <label for="hfToken">HuggingFace Token (for pyannote.audio):</label>
+                <input type="password" id="hfToken" placeholder="hf_xxxxxxxxxxxxx">
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="includeTimestamps" checked>
+                <label for="includeTimestamps">Include detailed timestamps</label>
+            </div>
+            
+            <div class="form-group">
+                <label for="numSpeakers">Expected speakers (optional):</label>
+                <input type="number" id="numSpeakers" min="1" max="10" placeholder="Auto-detect">
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <button id="uploadBtn" disabled>📤 Upload to Firebase & Process</button>
+        <button id="downloadBtn" style="display: none;">💾 Download Results</button>
+        
+        <!-- Progress and Status -->
+        <div class="progress" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        
+        <div class="status" id="statusDiv"></div>
+        
+        <!-- Results Section -->
+        <div class="results" id="resultsDiv">
+            <h3>🎭 Diarization Results</h3>
+            <div id="transcriptContainer"></div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js';
+        
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyASdf98Soi-LtMowVOQMhQvMWWVEP3KoC8",
+            authDomain: "aitts-d4c6d.firebaseapp.com",
+            projectId: "aitts-d4c6d",
+            storageBucket: "aitts-d4c6d.firebasestorage.app",
+            messagingSenderId: "927299361889",
+            appId: "1:927299361889:web:13408945d50bda7a2f5e20",
+            measurementId: "G-P1TK2HHBXR"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const storage = getStorage(app);
+
+        // DOM elements
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const statusDiv = document.getElementById('statusDiv');
+        const resultsDiv = document.getElementById('resultsDiv');
+        const transcriptContainer = document.getElementById('transcriptContainer');
+
+        let selectedFile = null;
+        let processingResults = null;
+
+        // File upload handlers
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelect(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+
+        function handleFileSelect(file) {
+            selectedFile = file;
+            uploadArea.innerHTML = `
+                <p>✅ Selected: ${file.name}</p>
+                <p style="color: #666;">Size: ${(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <p style="color: #666;">Type: ${file.type}</p>
+            `;
+            uploadBtn.disabled = false;
+        }
+
+        function showStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+
+        function updateProgress(percent) {
+            progressContainer.style.display = 'block';
+            progressBar.style.width = percent + '%';
+        }
+
+        // Upload and process workflow
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const runpodApiKey = document.getElementById('runpodApiKey').value;
+            const runpodEndpoint = document.getElementById('runpodEndpoint').value;
+            const hfToken = document.getElementById('hfToken').value;
+
+            if (!runpodApiKey || !runpodEndpoint || !hfToken) {
+                showStatus('Please fill in all required fields (RunPod API Key, Endpoint, HF Token)', 'error');
+                return;
+            }
+
+            try {
+                uploadBtn.disabled = true;
+                
+                // Step 1: Upload to Firebase Storage
+                showStatus('📤 Uploading to Firebase Storage...', 'info');
+                const fileName = `audio_${Date.now()}_${selectedFile.name}`;
+                const storageRef = ref(storage, `audio-uploads/${fileName}`);
+                
+                const uploadTask = uploadBytesResumable(storageRef, selectedFile);
+                
+                uploadTask.on('state_changed', 
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 50; // First 50% for upload
+                        updateProgress(progress);
+                    },
+                    (error) => {
+                        showStatus(`Upload failed: ${error.message}`, 'error');
+                        uploadBtn.disabled = false;
+                    },
+                    async () => {
+                        // Upload completed
+                        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                        showStatus('✅ Upload complete! Starting RunPod processing...', 'success');
+                        
+                        // Step 2: Send to RunPod for processing
+                        await processWithRunPod(downloadURL, {
+                            runpodApiKey,
+                            runpodEndpoint,
+                            hfToken,
+                            includeTimestamps: document.getElementById('includeTimestamps').checked,
+                            numSpeakers: document.getElementById('numSpeakers').value || null
+                        });
+                    }
+                );
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+                uploadBtn.disabled = false;
+            }
+        });
+
+        async function processWithRunPod(firebaseUrl, config) {
+            try {
+                showStatus('🤖 Processing with RunPod (Parakeet v3 + pyannote.audio)...', 'info');
+                updateProgress(60);
+
+                const payload = {
+                    input: {
+                        firebase_url: firebaseUrl,
+                        audio_format: "auto", // Let RunPod detect format
+                        include_timestamps: config.includeTimestamps,
+                        use_diarization: true,
+                        num_speakers: config.numSpeakers,
+                        hf_token: config.hfToken,
+                        processing_mode: "firebase_download" // New mode
+                    }
+                };
+
+                const response = await fetch(`https://api.runpod.ai/v2/${config.runpodEndpoint}/runsync`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${config.runpodApiKey}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                updateProgress(90);
+
+                if (result.status === 'COMPLETED') {
+                    showStatus('🎉 Processing completed successfully!', 'success');
+                    updateProgress(100);
+                    processingResults = result.output;
+                    displayResults(result.output);
+                    downloadBtn.style.display = 'inline-block';
+                } else {
+                    throw new Error(result.error || 'Processing failed');
+                }
+
+            } catch (error) {
+                showStatus(`RunPod processing failed: ${error.message}`, 'error');
+                uploadBtn.disabled = false;
+            }
+        }
+
+        function displayResults(results) {
+            const { diarized_transcript, speakers_detected, segments_processed, audio_duration_seconds } = results;
+            
+            // Summary
+            transcriptContainer.innerHTML = `
+                <div style="background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <h4>📊 Processing Summary</h4>
+                    <p><strong>Duration:</strong> ${(audio_duration_seconds / 60).toFixed(1)} minutes</p>
+                    <p><strong>Speakers:</strong> ${speakers_detected}</p>
+                    <p><strong>Segments:</strong> ${segments_processed}</p>
+                    <p><strong>Model:</strong> ${results.model_used} + ${results.diarization_model}</p>
+                </div>
+            `;
+            
+            // Transcript segments
+            diarized_transcript.forEach((segment, index) => {
+                const segmentDiv = document.createElement('div');
+                segmentDiv.className = 'transcript-segment';
+                
+                const startTime = formatTime(segment.start_time);
+                const endTime = formatTime(segment.end_time);
+                const segmentText = segment.segment_timestamps && segment.segment_timestamps.length > 0 
+                    ? segment.segment_timestamps[0].segment 
+                    : segment.text || '[No text available]';
+                
+                segmentDiv.innerHTML = `
+                    <div class="timestamp">[${startTime} - ${endTime}]</div>
+                    <div class="speaker-label">${segment.speaker}:</div>
+                    <div>${segmentText}</div>
+                `;
+                
+                transcriptContainer.appendChild(segmentDiv);
+            });
+            
+            resultsDiv.style.display = 'block';
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = (seconds % 60).toFixed(1);
+            return `${mins}:${secs.padStart(4, '0')}`;
+        }
+
+        // Download results
+        downloadBtn.addEventListener('click', () => {
+            if (!processingResults) return;
+            
+            const dataStr = JSON.stringify(processingResults, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `diarization_results_${Date.now()}.json`;
+            link.click();
+        });
+
+        // Make uploadBtn enabled when all fields are filled
+        const requiredFields = ['runpodApiKey', 'runpodEndpoint', 'hfToken'];
+        requiredFields.forEach(fieldId => {
+            document.getElementById(fieldId).addEventListener('input', () => {
+                const allFilled = requiredFields.every(id => 
+                    document.getElementById(id).value.trim() !== ''
+                );
+                uploadBtn.disabled = !selectedFile || !allFilled;
+            });
+        });
+
+    </script>
+</body>
+</html>

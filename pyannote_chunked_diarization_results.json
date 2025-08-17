@@ -1,0 +1,1775 @@
+{
+  "chunks": [
+    {
+      "file": "pyannote_chunks\\pyannote_chunk_000.wav",
+      "start_time": 0.0,
+      "end_time": 180.829,
+      "duration": 180.829,
+      "size_mb": 5.518537521362305
+    },
+    {
+      "file": "pyannote_chunks\\pyannote_chunk_001.wav",
+      "start_time": 180.829,
+      "end_time": 367.197,
+      "duration": 186.368,
+      "size_mb": 5.68757438659668
+    },
+    {
+      "file": "pyannote_chunks\\pyannote_chunk_002.wav",
+      "start_time": 367.197,
+      "end_time": 380.668,
+      "duration": 13.471,
+      "size_mb": 0.4111766815185547
+    }
+  ],
+  "individual_results": [
+    {
+      "delayTime": 58459,
+      "executionTime": 17405,
+      "id": "11487a98-45e2-4ee7-b393-26e054e0a9d2-u2",
+      "output": {
+        "audio_duration_seconds": 180.829,
+        "chunk_boundaries": [
+          {
+            "end": 168.491,
+            "start": 0
+          },
+          {
+            "end": 180.829,
+            "start": 168.491
+          }
+        ],
+        "chunking_method": "smart_silence_based",
+        "chunks_processed": 2,
+        "diarization_model": "pyannote/speaker-diarization-3.1",
+        "diarized_transcript": [
+          {
+            "duration": 6.16,
+            "end_time": 6.4,
+            "overlap_duration": 5.933468749999999,
+            "segment_timestamps": [
+              {
+                "end": 6.4,
+                "end_offset": 80,
+                "segment": "And tonight we have new reporting from Rolling Stone on how Donald Trump views the women who have come forward.",
+                "start": 0.24,
+                "start_offset": 3
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 0.24,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 17.200000000000003,
+            "end_time": 24.080000000000002,
+            "overlap_duration": 16.77375,
+            "segment_timestamps": [
+              {
+                "end": 24.080000000000002,
+                "end_offset": 301,
+                "segment": "Trump has said that some of these people speaking out are, in his words, clearly of a Democrat political affiliation, and has repeatedly critiqued the string of media appearances by Epstein accusers and their families, arguing that some of them are just trying to make him look bad.",
+                "start": 6.88,
+                "start_offset": 86
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 6.88,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.919999999999998,
+            "end_time": 28.48,
+            "overlap_duration": 3.794656249999999,
+            "segment_timestamps": [
+              {
+                "end": 28.48,
+                "end_offset": 356,
+                "segment": "Swin Subsang is one of the reporters who broke that story.",
+                "start": 24.560000000000002,
+                "start_offset": 307
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 24.560000000000002,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.6799999999999997,
+            "end_time": 32.32,
+            "overlap_duration": 3.6799999999999997,
+            "segment_timestamps": [
+              {
+                "end": 32.32,
+                "end_offset": 404,
+                "segment": "He is a senior political reporter at Rolling Stone, and he joins me now.",
+                "start": 28.64,
+                "start_offset": 358
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 28.64,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 0.5599999999999952,
+            "end_time": 33.04,
+            "overlap_duration": 0.5599999999999952,
+            "segment_timestamps": [
+              {
+                "end": 33.04,
+                "end_offset": 413,
+                "segment": "Good to see you.",
+                "start": 32.480000000000004,
+                "start_offset": 406
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 32.480000000000004,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 1.3600000000000065,
+            "end_time": 34.480000000000004,
+            "overlap_duration": 1.3600000000000065,
+            "segment_timestamps": [
+              {
+                "end": 34.480000000000004,
+                "end_offset": 431,
+                "segment": "Thanks for being here on set tonight.",
+                "start": 33.12,
+                "start_offset": 414
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 33.12,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 0.5600000000000023,
+            "end_time": 35.28,
+            "overlap_duration": 0.452781250000001,
+            "segment_timestamps": [
+              {
+                "end": 35.28,
+                "end_offset": 441,
+                "segment": "Thank you for having me.",
+                "start": 34.72,
+                "start_offset": 434
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 34.72,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 9.200000000000003,
+            "end_time": 44.64,
+            "overlap_duration": 9.200000000000003,
+            "segment_timestamps": [
+              {
+                "end": 44.64,
+                "end_offset": 558,
+                "segment": "It sort of sounds from your reporting like Donald Trump sees himself as the victim here, and uh not all the survivors who were personally impacted by Epstein.",
+                "start": 35.44,
+                "start_offset": 443
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 35.44,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 0.480000000000004,
+            "end_time": 45.52,
+            "overlap_duration": 0.480000000000004,
+            "segment_timestamps": [
+              {
+                "end": 45.52,
+                "end_offset": 569,
+                "segment": "Absolutely.",
+                "start": 45.04,
+                "start_offset": 563
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 45.04,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 2.5600000000000023,
+            "end_time": 48.24,
+            "overlap_duration": 2.5600000000000023,
+            "segment_timestamps": [
+              {
+                "end": 48.24,
+                "end_offset": 603,
+                "segment": "And that is par for the course for this president.",
+                "start": 45.68,
+                "start_offset": 571
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 45.68,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 22.240000000000002,
+            "end_time": 70.64,
+            "overlap_duration": 22.240000000000002,
+            "segment_timestamps": [
+              {
+                "end": 70.64,
+                "end_offset": 883,
+                "segment": "Whatever is going on on the political or personal landscape, he always values casting himself as the victim, as the besieged one, even in a situation as black and white as this, when it's pretty clear who the survivors are and who the victims and alleged victims and the accusers are for something especially so heinous as what we've uh come to know with regards to the Jeffrey Epstein saga.",
+                "start": 48.4,
+                "start_offset": 605
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 48.4,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 19.120000000000005,
+            "end_time": 90,
+            "overlap_duration": 19.120000000000005,
+            "segment_timestamps": [
+              {
+                "end": 90,
+                "end_offset": 1125,
+                "segment": "And uh publicly, it we one of the things that got us onto reporting this out is that uh public facing, Trump is often very garrulous in how he insults his enemies, big and small, who come after him or who, if he feels like they're coming after him, especially when he's sitting as leader of the free world.",
+                "start": 70.88,
+                "start_offset": 886
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 70.88,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.8400000000000034,
+            "end_time": 94,
+            "overlap_duration": 3.8400000000000034,
+            "segment_timestamps": [
+              {
+                "end": 94,
+                "end_offset": 1175,
+                "segment": "There is no low level to punch down that is too low for him.",
+                "start": 90.16,
+                "start_offset": 1127
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 90.16,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 5.040000000000006,
+            "end_time": 99.2,
+            "overlap_duration": 5.040000000000006,
+            "segment_timestamps": [
+              {
+                "end": 99.2,
+                "end_offset": 1240,
+                "segment": "But for some reason, he was conspicuously silent about these families and these individual accusers.",
+                "start": 94.16,
+                "start_offset": 1177
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 94.16,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 6.960000000000008,
+            "end_time": 106.32000000000001,
+            "overlap_duration": 4.637843750000002,
+            "segment_timestamps": [
+              {
+                "end": 106.32000000000001,
+                "end_offset": 1329,
+                "segment": "So we set out to figure out, okay, with our sources in and out of the administration, what is he saying privately?",
+                "start": 99.36,
+                "start_offset": 1242
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 99.36,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 5.840000000000003,
+            "end_time": 112.32000000000001,
+            "overlap_duration": 5.840000000000003,
+            "segment_timestamps": [
+              {
+                "end": 112.32000000000001,
+                "end_offset": 1404,
+                "segment": "Uh how does how is he viewing these media campaigns from these different families and from these different accusers?",
+                "start": 106.48,
+                "start_offset": 1331
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 106.48,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 5.1200000000000045,
+            "end_time": 117.60000000000001,
+            "overlap_duration": 5.1200000000000045,
+            "segment_timestamps": [
+              {
+                "end": 117.60000000000001,
+                "end_offset": 1470,
+                "segment": "And as you put in your uh intro, when you reference our reporting, it's not a positive one.",
+                "start": 112.48,
+                "start_offset": 1406
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 112.48,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 30.39999999999999,
+            "end_time": 148.16,
+            "overlap_duration": 30.39999999999999,
+            "segment_timestamps": [
+              {
+                "end": 148.16,
+                "end_offset": 1852,
+                "segment": "He is getting really, really annoyed in recent weeks with these individuals, accusing them of being essentially democratic operatives, coordinating with uh supposedly this liberal uh media and uh liberal lawyer ecosystem that he thinks is just out to get him and make him look bad and imply to the public that maybe he did something wrong or super fishy or whatever during his years of palling around with uh country's most notorious pedophile, Jeffrey Epstein.",
+                "start": 117.76,
+                "start_offset": 1472
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 117.76,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 6.480000000000018,
+            "end_time": 154.8,
+            "overlap_duration": 6.480000000000018,
+            "segment_timestamps": [
+              {
+                "end": 154.8,
+                "end_offset": 1935,
+                "segment": "So, again, when it comes to the character and pol politicking of Donald Trump, sadly, par for the course.",
+                "start": 148.32,
+                "start_offset": 1854
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 148.32,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.5200000000000102,
+            "end_time": 158.8,
+            "overlap_duration": 3.5200000000000102,
+            "segment_timestamps": [
+              {
+                "end": 158.8,
+                "end_offset": 1985,
+                "segment": "You know, I I I've interviewed some of the survivors.",
+                "start": 155.28,
+                "start_offset": 1941
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 155.28,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 2.5600000000000023,
+            "end_time": 161.44,
+            "overlap_duration": 2.5600000000000023,
+            "segment_timestamps": [
+              {
+                "end": 161.44,
+                "end_offset": 2018,
+                "segment": "They've come on many of our shows here at MS.",
+                "start": 158.88,
+                "start_offset": 1986
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 158.88,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 6.240000000000009,
+            "end_time": 168.24,
+            "overlap_duration": 6.240000000000009,
+            "segment_timestamps": [
+              {
+                "end": 168.24,
+                "end_offset": 2103,
+                "segment": "And then I've also listened to many of them, read their interviews, and they're incredibly straightforward most of the time.",
+                "start": 162,
+                "start_offset": 2025
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 162,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 4,
+            "end_time": 172.73100000000002,
+            "overlap_duration": 4,
+            "segment_timestamps": [
+              {
+                "end": 4.24,
+                "end_offset": 53,
+                "segment": "It's basically, uh, we would love if you included us in the process.",
+                "start": 0.24,
+                "start_offset": 3
+              }
+            ],
+            "source_chunk": 2,
+            "speaker": "SPEAKER_00",
+            "start_time": 168.73100000000002,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 2.3199999999999994,
+            "end_time": 175.211,
+            "overlap_duration": 2.3199999999999994,
+            "segment_timestamps": [
+              {
+                "end": 6.72,
+                "end_offset": 84,
+                "segment": "We'd like to be notified about what's going on.",
+                "start": 4.4,
+                "start_offset": 55
+              }
+            ],
+            "source_chunk": 2,
+            "speaker": "SPEAKER_00",
+            "start_time": 172.89100000000002,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 5.28,
+            "end_time": 180.651,
+            "overlap_duration": 5.2672187500000005,
+            "segment_timestamps": [
+              {
+                "end": 12.16,
+                "end_offset": 152,
+                "segment": "Could you contact our lawyers perhaps before you go down to a prison in Florida and maybe make a deal?",
+                "start": 6.88,
+                "start_offset": 86
+              }
+            ],
+            "source_chunk": 2,
+            "speaker": "SPEAKER_00",
+            "start_time": 175.371,
+            "text": "",
+            "word_timestamps": []
+          }
+        ],
+        "long_audio_optimization": "local_attention_enabled",
+        "merged_text": "",
+        "model_used": "nvidia/parakeet-tdt-0.6b-v3",
+        "processing_method": "diarization_then_transcription_then_match",
+        "segments_processed": 25,
+        "speakers_detected": 2,
+        "streaming_config": null
+      },
+      "status": "COMPLETED",
+      "workerId": "cb5c2z2wsmt9uq"
+    },
+    {
+      "delayTime": 50069,
+      "executionTime": 13380,
+      "id": "dc76921e-aac2-47f5-8800-0359797450b7-u1",
+      "output": {
+        "audio_duration_seconds": 186.368,
+        "chunk_boundaries": [
+          {
+            "end": 179.633,
+            "start": 0
+          },
+          {
+            "end": 186.368,
+            "start": 179.633
+          }
+        ],
+        "chunking_method": "smart_silence_based",
+        "chunks_processed": 2,
+        "diarization_model": "pyannote/speaker-diarization-3.1",
+        "diarized_transcript": [
+          {
+            "duration": 2.6399999999999997,
+            "end_time": 2.88,
+            "overlap_duration": 2.6399999999999997,
+            "segment_timestamps": [
+              {
+                "end": 2.88,
+                "end_offset": 36,
+                "segment": "Uh please treat us with some respect.",
+                "start": 0.24,
+                "start_offset": 3
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 0.24,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 5.04,
+            "end_time": 8.08,
+            "overlap_duration": 5.04,
+            "segment_timestamps": [
+              {
+                "end": 8.08,
+                "end_offset": 101,
+                "segment": "And perhaps if there's something to be learned from these documents that you once said you would release, we'd like to see them too.",
+                "start": 3.04,
+                "start_offset": 38
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 3.04,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 2.3200000000000003,
+            "end_time": 10.56,
+            "overlap_duration": 2.3200000000000003,
+            "segment_timestamps": [
+              {
+                "end": 10.56,
+                "end_offset": 132,
+                "segment": "I mean, those aren't really partisan requests.",
+                "start": 8.24,
+                "start_offset": 103
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 8.24,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.84,
+            "end_time": 14.48,
+            "overlap_duration": 3.84,
+            "segment_timestamps": [
+              {
+                "end": 14.48,
+                "end_offset": 181,
+                "segment": "Those seem like very standard asks from people who've been incredibly harmed.",
+                "start": 10.64,
+                "start_offset": 133
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 10.64,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 0.16000000000000014,
+            "end_time": 15.040000000000001,
+            "overlap_duration": 0.16000000000000014,
+            "segment_timestamps": [
+              {
+                "end": 15.040000000000001,
+                "end_offset": 188,
+                "segment": "Right.",
+                "start": 14.88,
+                "start_offset": 186
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 14.88,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 18.16,
+            "end_time": 33.28,
+            "overlap_duration": 18.16,
+            "segment_timestamps": [
+              {
+                "end": 33.28,
+                "end_offset": 416,
+                "segment": "And for a president of the United States who is as obsessed with so-called public relations as this one, you think that he and his administration would put better care in terms of even private or gentle communications with these families and their attorneys and these uh survivors and these accusers.",
+                "start": 15.120000000000001,
+                "start_offset": 189
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 15.120000000000001,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 4.080000000000005,
+            "end_time": 37.52,
+            "overlap_duration": 4.080000000000005,
+            "segment_timestamps": [
+              {
+                "end": 37.52,
+                "end_offset": 469,
+                "segment": "As far as we can tell, they are mostly keeping them at arm's length.",
+                "start": 33.44,
+                "start_offset": 418
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 33.44,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 9.280000000000001,
+            "end_time": 46.96,
+            "overlap_duration": 9.280000000000001,
+            "segment_timestamps": [
+              {
+                "end": 46.96,
+                "end_offset": 587,
+                "segment": "There is obviously a ton of secrecy within the past month plus with this shambolic blowback and handling within the administration of the whole Epstein saga.",
+                "start": 37.68,
+                "start_offset": 471
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 37.68,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 33.440000000000005,
+            "end_time": 80.48,
+            "overlap_duration": 33.440000000000005,
+            "segment_timestamps": [
+              {
+                "end": 80.48,
+                "end_offset": 1006,
+                "segment": "And instead of focusing on, as you were pointing out, trying to approach these very straightforward, very understanding, very human stories with any modicum of care, of course, this president and this administration are instead leaning into things like trying to wield the nation's intelligence and vast federal law enforcement apparatus to try to change the subject to maybe we should think about putting Barack Obama or James Comey in jail for a completely made-up uh scandal that Donald Trump would much rather talk about than the Epstein saga.",
+                "start": 47.04,
+                "start_offset": 588
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 47.04,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 4.640000000000001,
+            "end_time": 85.36,
+            "overlap_duration": 4.640000000000001,
+            "segment_timestamps": [
+              {
+                "end": 85.36,
+                "end_offset": 1067,
+                "segment": "Do you think some of what we're seeing happen in DC right now is a part of that distraction effort?",
+                "start": 80.72,
+                "start_offset": 1009
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 80.72,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 26.799999999999997,
+            "end_time": 112.56,
+            "overlap_duration": 26.799999999999997,
+            "segment_timestamps": [
+              {
+                "end": 112.56,
+                "end_offset": 1407,
+                "segment": "I mean, that may be an added benefit for him, but because it has been a top policy priority of his for years, dating back to his first administration and during the Joe Biden years when he was out of office, to wield the US military against uh democratic dominant cities he doesn't like and his political enemies, uh, maybe it's distracting or turning some of the media focus away from the Epstein stuff somewhat.",
+                "start": 85.76,
+                "start_offset": 1072
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 85.76,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 9.680000000000007,
+            "end_time": 122.48,
+            "overlap_duration": 9.680000000000007,
+            "segment_timestamps": [
+              {
+                "end": 122.48,
+                "end_offset": 1531,
+                "segment": "But when it is was his top political priority, or at least one of his top political priorities for so many years, I don't think it should be simply dismissed as a quote-unquote distraction.",
+                "start": 112.8,
+                "start_offset": 1410
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 112.8,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 10.960000000000008,
+            "end_time": 133.68,
+            "overlap_duration": 10.960000000000008,
+            "segment_timestamps": [
+              {
+                "end": 133.68,
+                "end_offset": 1671,
+                "segment": "And he's still facing heat, not just from his own base and people, you know, who are incredibly frustrated by all this, but on Capitol Hill, I mean, Roe Connor and Thomas Massey say they're going to try to bring survivors to speak.",
+                "start": 122.72,
+                "start_offset": 1534
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 122.72,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 2.8000000000000114,
+            "end_time": 136.64000000000001,
+            "overlap_duration": 2.8000000000000114,
+            "segment_timestamps": [
+              {
+                "end": 136.64000000000001,
+                "end_offset": 1708,
+                "segment": "People want them to be able to testify formally as well.",
+                "start": 133.84,
+                "start_offset": 1673
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 133.84,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 3.8400000000000034,
+            "end_time": 140.64000000000001,
+            "overlap_duration": 3.799718750000011,
+            "segment_timestamps": [
+              {
+                "end": 140.64000000000001,
+                "end_offset": 1758,
+                "segment": "Do you think any of that is really going to happen and could it change the dynamic here?",
+                "start": 136.8,
+                "start_offset": 1710
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_00",
+            "start_time": 136.8,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 10,
+            "end_time": 151.12,
+            "overlap_duration": 10,
+            "segment_timestamps": [
+              {
+                "end": 151.12,
+                "end_offset": 1889,
+                "segment": "Well, it it's a little bit hard to see how much of that, particularly from Democratic lawmakers, is going to break through, considering who holds the keys to power in Washington right now.",
+                "start": 141.12,
+                "start_offset": 1764
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 141.12,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 21.840000000000003,
+            "end_time": 173.20000000000002,
+            "overlap_duration": 17.285968749999995,
+            "segment_timestamps": [
+              {
+                "end": 173.20000000000002,
+                "end_offset": 2165,
+                "segment": "Having said that, um, when it comes to the casualty, casual cruelty of the Trump administration, when you're looking at their authoritarian power grabs in DC, Los Angeles, etc., and how they're handling the Epstein saga and the ongoing um whatever is in the files, a form of a cover up of some kind, it's almost kind of different tunes in the same song.",
+                "start": 151.36,
+                "start_offset": 1892
+              }
+            ],
+            "source_chunk": 1,
+            "speaker": "SPEAKER_01",
+            "start_time": 151.36,
+            "text": "",
+            "word_timestamps": []
+          },
+          {
+            "duration": 6.734999999999985,
+            "end_time": 186.368,
+            "segment_timestamps": [],
+            "source_chunk": 2,
+            "speaker": "UNKNOWN",
+            "start_time": 179.633,
+            "text": "",
+            "word_timestamps": []
+          }
+        ],
+        "long_audio_optimization": "local_attention_enabled",
+        "merged_text": "",
+        "model_used": "nvidia/parakeet-tdt-0.6b-v3",
+        "processing_method": "diarization_then_transcription_then_match",
+        "segments_processed": 18,
+        "speakers_detected": 2,
+        "streaming_config": null
+      },
+      "status": "COMPLETED",
+      "workerId": "cb5c2z2wsmt9uq"
+    },
+    {
+      "delayTime": 46602,
+      "executionTime": 8726,
+      "id": "7d253e46-7d28-4df0-826d-1413800fa469-u1",
+      "output": {
+        "audio_duration_seconds": 13.471,
+        "chunk_boundaries": [
+          {
+            "end": 13.471,
+            "start": 0
+          }
+        ],
+        "chunking_method": "smart_silence_based",
+        "chunks_processed": 1,
+        "diarization_model": "pyannote/speaker-diarization-3.1",
+        "diarized_transcript": [
+          {
+            "duration": 13.471,
+            "end_time": 13.471,
+            "segment_timestamps": [],
+            "source_chunk": 1,
+            "speaker": "UNKNOWN",
+            "start_time": 0,
+            "text": "",
+            "word_timestamps": []
+          }
+        ],
+        "long_audio_optimization": "local_attention_enabled",
+        "merged_text": "",
+        "model_used": "nvidia/parakeet-tdt-0.6b-v3",
+        "processing_method": "diarization_then_transcription_then_match",
+        "segments_processed": 1,
+        "speakers_detected": 0,
+        "streaming_config": null
+      },
+      "status": "COMPLETED",
+      "workerId": "tyx9vknwl822qd"
+    }
+  ],
+  "final_diarized_result": {
+    "diarized_transcript": [
+      {
+        "duration": 6.16,
+        "end_time": 6.4,
+        "overlap_duration": 5.933468749999999,
+        "segment_timestamps": [
+          {
+            "end": 6.4,
+            "end_offset": 80,
+            "segment": "And tonight we have new reporting from Rolling Stone on how Donald Trump views the women who have come forward.",
+            "start": 0.24,
+            "start_offset": 3
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 0.24,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 17.200000000000003,
+        "end_time": 24.080000000000002,
+        "overlap_duration": 16.77375,
+        "segment_timestamps": [
+          {
+            "end": 24.080000000000002,
+            "end_offset": 301,
+            "segment": "Trump has said that some of these people speaking out are, in his words, clearly of a Democrat political affiliation, and has repeatedly critiqued the string of media appearances by Epstein accusers and their families, arguing that some of them are just trying to make him look bad.",
+            "start": 6.88,
+            "start_offset": 86
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 6.88,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.919999999999998,
+        "end_time": 28.48,
+        "overlap_duration": 3.794656249999999,
+        "segment_timestamps": [
+          {
+            "end": 28.48,
+            "end_offset": 356,
+            "segment": "Swin Subsang is one of the reporters who broke that story.",
+            "start": 24.560000000000002,
+            "start_offset": 307
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 24.560000000000002,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.6799999999999997,
+        "end_time": 32.32,
+        "overlap_duration": 3.6799999999999997,
+        "segment_timestamps": [
+          {
+            "end": 32.32,
+            "end_offset": 404,
+            "segment": "He is a senior political reporter at Rolling Stone, and he joins me now.",
+            "start": 28.64,
+            "start_offset": 358
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 28.64,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 0.5599999999999952,
+        "end_time": 33.04,
+        "overlap_duration": 0.5599999999999952,
+        "segment_timestamps": [
+          {
+            "end": 33.04,
+            "end_offset": 413,
+            "segment": "Good to see you.",
+            "start": 32.480000000000004,
+            "start_offset": 406
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 32.480000000000004,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 1.3600000000000065,
+        "end_time": 34.480000000000004,
+        "overlap_duration": 1.3600000000000065,
+        "segment_timestamps": [
+          {
+            "end": 34.480000000000004,
+            "end_offset": 431,
+            "segment": "Thanks for being here on set tonight.",
+            "start": 33.12,
+            "start_offset": 414
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 33.12,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 0.5600000000000023,
+        "end_time": 35.28,
+        "overlap_duration": 0.452781250000001,
+        "segment_timestamps": [
+          {
+            "end": 35.28,
+            "end_offset": 441,
+            "segment": "Thank you for having me.",
+            "start": 34.72,
+            "start_offset": 434
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 34.72,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 9.200000000000003,
+        "end_time": 44.64,
+        "overlap_duration": 9.200000000000003,
+        "segment_timestamps": [
+          {
+            "end": 44.64,
+            "end_offset": 558,
+            "segment": "It sort of sounds from your reporting like Donald Trump sees himself as the victim here, and uh not all the survivors who were personally impacted by Epstein.",
+            "start": 35.44,
+            "start_offset": 443
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 35.44,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 0.480000000000004,
+        "end_time": 45.52,
+        "overlap_duration": 0.480000000000004,
+        "segment_timestamps": [
+          {
+            "end": 45.52,
+            "end_offset": 569,
+            "segment": "Absolutely.",
+            "start": 45.04,
+            "start_offset": 563
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 45.04,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.5600000000000023,
+        "end_time": 48.24,
+        "overlap_duration": 2.5600000000000023,
+        "segment_timestamps": [
+          {
+            "end": 48.24,
+            "end_offset": 603,
+            "segment": "And that is par for the course for this president.",
+            "start": 45.68,
+            "start_offset": 571
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 45.68,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 22.240000000000002,
+        "end_time": 70.64,
+        "overlap_duration": 22.240000000000002,
+        "segment_timestamps": [
+          {
+            "end": 70.64,
+            "end_offset": 883,
+            "segment": "Whatever is going on on the political or personal landscape, he always values casting himself as the victim, as the besieged one, even in a situation as black and white as this, when it's pretty clear who the survivors are and who the victims and alleged victims and the accusers are for something especially so heinous as what we've uh come to know with regards to the Jeffrey Epstein saga.",
+            "start": 48.4,
+            "start_offset": 605
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 48.4,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 19.120000000000005,
+        "end_time": 90.0,
+        "overlap_duration": 19.120000000000005,
+        "segment_timestamps": [
+          {
+            "end": 90,
+            "end_offset": 1125,
+            "segment": "And uh publicly, it we one of the things that got us onto reporting this out is that uh public facing, Trump is often very garrulous in how he insults his enemies, big and small, who come after him or who, if he feels like they're coming after him, especially when he's sitting as leader of the free world.",
+            "start": 70.88,
+            "start_offset": 886
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 70.88,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.8400000000000034,
+        "end_time": 94.0,
+        "overlap_duration": 3.8400000000000034,
+        "segment_timestamps": [
+          {
+            "end": 94,
+            "end_offset": 1175,
+            "segment": "There is no low level to punch down that is too low for him.",
+            "start": 90.16,
+            "start_offset": 1127
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 90.16,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 5.040000000000006,
+        "end_time": 99.2,
+        "overlap_duration": 5.040000000000006,
+        "segment_timestamps": [
+          {
+            "end": 99.2,
+            "end_offset": 1240,
+            "segment": "But for some reason, he was conspicuously silent about these families and these individual accusers.",
+            "start": 94.16,
+            "start_offset": 1177
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 94.16,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 6.960000000000008,
+        "end_time": 106.32000000000001,
+        "overlap_duration": 4.637843750000002,
+        "segment_timestamps": [
+          {
+            "end": 106.32000000000001,
+            "end_offset": 1329,
+            "segment": "So we set out to figure out, okay, with our sources in and out of the administration, what is he saying privately?",
+            "start": 99.36,
+            "start_offset": 1242
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 99.36,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 5.840000000000003,
+        "end_time": 112.32000000000001,
+        "overlap_duration": 5.840000000000003,
+        "segment_timestamps": [
+          {
+            "end": 112.32000000000001,
+            "end_offset": 1404,
+            "segment": "Uh how does how is he viewing these media campaigns from these different families and from these different accusers?",
+            "start": 106.48,
+            "start_offset": 1331
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 106.48,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 5.1200000000000045,
+        "end_time": 117.60000000000001,
+        "overlap_duration": 5.1200000000000045,
+        "segment_timestamps": [
+          {
+            "end": 117.60000000000001,
+            "end_offset": 1470,
+            "segment": "And as you put in your uh intro, when you reference our reporting, it's not a positive one.",
+            "start": 112.48,
+            "start_offset": 1406
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 112.48,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 30.39999999999999,
+        "end_time": 148.16,
+        "overlap_duration": 30.39999999999999,
+        "segment_timestamps": [
+          {
+            "end": 148.16,
+            "end_offset": 1852,
+            "segment": "He is getting really, really annoyed in recent weeks with these individuals, accusing them of being essentially democratic operatives, coordinating with uh supposedly this liberal uh media and uh liberal lawyer ecosystem that he thinks is just out to get him and make him look bad and imply to the public that maybe he did something wrong or super fishy or whatever during his years of palling around with uh country's most notorious pedophile, Jeffrey Epstein.",
+            "start": 117.76,
+            "start_offset": 1472
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 117.76,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 6.480000000000018,
+        "end_time": 154.8,
+        "overlap_duration": 6.480000000000018,
+        "segment_timestamps": [
+          {
+            "end": 154.8,
+            "end_offset": 1935,
+            "segment": "So, again, when it comes to the character and pol politicking of Donald Trump, sadly, par for the course.",
+            "start": 148.32,
+            "start_offset": 1854
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 2",
+        "start_time": 148.32,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.5200000000000102,
+        "end_time": 158.8,
+        "overlap_duration": 3.5200000000000102,
+        "segment_timestamps": [
+          {
+            "end": 158.8,
+            "end_offset": 1985,
+            "segment": "You know, I I I've interviewed some of the survivors.",
+            "start": 155.28,
+            "start_offset": 1941
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 155.28,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.5600000000000023,
+        "end_time": 161.44,
+        "overlap_duration": 2.5600000000000023,
+        "segment_timestamps": [
+          {
+            "end": 161.44,
+            "end_offset": 2018,
+            "segment": "They've come on many of our shows here at MS.",
+            "start": 158.88,
+            "start_offset": 1986
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 158.88,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 6.240000000000009,
+        "end_time": 168.24,
+        "overlap_duration": 6.240000000000009,
+        "segment_timestamps": [
+          {
+            "end": 168.24,
+            "end_offset": 2103,
+            "segment": "And then I've also listened to many of them, read their interviews, and they're incredibly straightforward most of the time.",
+            "start": 162,
+            "start_offset": 2025
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 162.0,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 4,
+        "end_time": 172.73100000000002,
+        "overlap_duration": 4,
+        "segment_timestamps": [
+          {
+            "end": 4.24,
+            "end_offset": 53,
+            "segment": "It's basically, uh, we would love if you included us in the process.",
+            "start": 0.24,
+            "start_offset": 3
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 168.73100000000002,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.3199999999999994,
+        "end_time": 175.211,
+        "overlap_duration": 2.3199999999999994,
+        "segment_timestamps": [
+          {
+            "end": 6.72,
+            "end_offset": 84,
+            "segment": "We'd like to be notified about what's going on.",
+            "start": 4.4,
+            "start_offset": 55
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 172.89100000000002,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 5.28,
+        "end_time": 180.651,
+        "overlap_duration": 5.2672187500000005,
+        "segment_timestamps": [
+          {
+            "end": 12.16,
+            "end_offset": 152,
+            "segment": "Could you contact our lawyers perhaps before you go down to a prison in Florida and maybe make a deal?",
+            "start": 6.88,
+            "start_offset": 86
+          }
+        ],
+        "source_chunk": 1,
+        "speaker": "Speaker 1",
+        "start_time": 175.371,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.6399999999999997,
+        "end_time": 183.709,
+        "overlap_duration": 2.6399999999999997,
+        "segment_timestamps": [
+          {
+            "end": 2.88,
+            "end_offset": 36,
+            "segment": "Uh please treat us with some respect.",
+            "start": 0.24,
+            "start_offset": 3
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 181.06900000000002,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 5.04,
+        "end_time": 188.90900000000002,
+        "overlap_duration": 5.04,
+        "segment_timestamps": [
+          {
+            "end": 8.08,
+            "end_offset": 101,
+            "segment": "And perhaps if there's something to be learned from these documents that you once said you would release, we'd like to see them too.",
+            "start": 3.04,
+            "start_offset": 38
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 183.869,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.3200000000000003,
+        "end_time": 191.389,
+        "overlap_duration": 2.3200000000000003,
+        "segment_timestamps": [
+          {
+            "end": 10.56,
+            "end_offset": 132,
+            "segment": "I mean, those aren't really partisan requests.",
+            "start": 8.24,
+            "start_offset": 103
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 189.06900000000002,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.84,
+        "end_time": 195.309,
+        "overlap_duration": 3.84,
+        "segment_timestamps": [
+          {
+            "end": 14.48,
+            "end_offset": 181,
+            "segment": "Those seem like very standard asks from people who've been incredibly harmed.",
+            "start": 10.64,
+            "start_offset": 133
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 191.469,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 0.16000000000000014,
+        "end_time": 195.869,
+        "overlap_duration": 0.16000000000000014,
+        "segment_timestamps": [
+          {
+            "end": 15.040000000000001,
+            "end_offset": 188,
+            "segment": "Right.",
+            "start": 14.88,
+            "start_offset": 186
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 195.709,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 18.16,
+        "end_time": 214.109,
+        "overlap_duration": 18.16,
+        "segment_timestamps": [
+          {
+            "end": 33.28,
+            "end_offset": 416,
+            "segment": "And for a president of the United States who is as obsessed with so-called public relations as this one, you think that he and his administration would put better care in terms of even private or gentle communications with these families and their attorneys and these uh survivors and these accusers.",
+            "start": 15.120000000000001,
+            "start_offset": 189
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 195.949,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 4.080000000000005,
+        "end_time": 218.34900000000002,
+        "overlap_duration": 4.080000000000005,
+        "segment_timestamps": [
+          {
+            "end": 37.52,
+            "end_offset": 469,
+            "segment": "As far as we can tell, they are mostly keeping them at arm's length.",
+            "start": 33.44,
+            "start_offset": 418
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 214.269,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 9.280000000000001,
+        "end_time": 227.78900000000002,
+        "overlap_duration": 9.280000000000001,
+        "segment_timestamps": [
+          {
+            "end": 46.96,
+            "end_offset": 587,
+            "segment": "There is obviously a ton of secrecy within the past month plus with this shambolic blowback and handling within the administration of the whole Epstein saga.",
+            "start": 37.68,
+            "start_offset": 471
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 218.50900000000001,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 33.440000000000005,
+        "end_time": 261.309,
+        "overlap_duration": 33.440000000000005,
+        "segment_timestamps": [
+          {
+            "end": 80.48,
+            "end_offset": 1006,
+            "segment": "And instead of focusing on, as you were pointing out, trying to approach these very straightforward, very understanding, very human stories with any modicum of care, of course, this president and this administration are instead leaning into things like trying to wield the nation's intelligence and vast federal law enforcement apparatus to try to change the subject to maybe we should think about putting Barack Obama or James Comey in jail for a completely made-up uh scandal that Donald Trump would much rather talk about than the Epstein saga.",
+            "start": 47.04,
+            "start_offset": 588
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 227.869,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 4.640000000000001,
+        "end_time": 266.189,
+        "overlap_duration": 4.640000000000001,
+        "segment_timestamps": [
+          {
+            "end": 85.36,
+            "end_offset": 1067,
+            "segment": "Do you think some of what we're seeing happen in DC right now is a part of that distraction effort?",
+            "start": 80.72,
+            "start_offset": 1009
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 261.549,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 26.799999999999997,
+        "end_time": 293.389,
+        "overlap_duration": 26.799999999999997,
+        "segment_timestamps": [
+          {
+            "end": 112.56,
+            "end_offset": 1407,
+            "segment": "I mean, that may be an added benefit for him, but because it has been a top policy priority of his for years, dating back to his first administration and during the Joe Biden years when he was out of office, to wield the US military against uh democratic dominant cities he doesn't like and his political enemies, uh, maybe it's distracting or turning some of the media focus away from the Epstein stuff somewhat.",
+            "start": 85.76,
+            "start_offset": 1072
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 266.589,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 9.680000000000007,
+        "end_time": 303.309,
+        "overlap_duration": 9.680000000000007,
+        "segment_timestamps": [
+          {
+            "end": 122.48,
+            "end_offset": 1531,
+            "segment": "But when it is was his top political priority, or at least one of his top political priorities for so many years, I don't think it should be simply dismissed as a quote-unquote distraction.",
+            "start": 112.8,
+            "start_offset": 1410
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 293.629,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 10.960000000000008,
+        "end_time": 314.509,
+        "overlap_duration": 10.960000000000008,
+        "segment_timestamps": [
+          {
+            "end": 133.68,
+            "end_offset": 1671,
+            "segment": "And he's still facing heat, not just from his own base and people, you know, who are incredibly frustrated by all this, but on Capitol Hill, I mean, Roe Connor and Thomas Massey say they're going to try to bring survivors to speak.",
+            "start": 122.72,
+            "start_offset": 1534
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 303.549,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 2.8000000000000114,
+        "end_time": 317.46900000000005,
+        "overlap_duration": 2.8000000000000114,
+        "segment_timestamps": [
+          {
+            "end": 136.64000000000001,
+            "end_offset": 1708,
+            "segment": "People want them to be able to testify formally as well.",
+            "start": 133.84,
+            "start_offset": 1673
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 314.669,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 3.8400000000000034,
+        "end_time": 321.46900000000005,
+        "overlap_duration": 3.799718750000011,
+        "segment_timestamps": [
+          {
+            "end": 140.64000000000001,
+            "end_offset": 1758,
+            "segment": "Do you think any of that is really going to happen and could it change the dynamic here?",
+            "start": 136.8,
+            "start_offset": 1710
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 1",
+        "start_time": 317.629,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 10,
+        "end_time": 331.949,
+        "overlap_duration": 10,
+        "segment_timestamps": [
+          {
+            "end": 151.12,
+            "end_offset": 1889,
+            "segment": "Well, it it's a little bit hard to see how much of that, particularly from Democratic lawmakers, is going to break through, considering who holds the keys to power in Washington right now.",
+            "start": 141.12,
+            "start_offset": 1764
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 321.949,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 21.840000000000003,
+        "end_time": 354.029,
+        "overlap_duration": 17.285968749999995,
+        "segment_timestamps": [
+          {
+            "end": 173.20000000000002,
+            "end_offset": 2165,
+            "segment": "Having said that, um, when it comes to the casualty, casual cruelty of the Trump administration, when you're looking at their authoritarian power grabs in DC, Los Angeles, etc., and how they're handling the Epstein saga and the ongoing um whatever is in the files, a form of a cover up of some kind, it's almost kind of different tunes in the same song.",
+            "start": 151.36,
+            "start_offset": 1892
+          }
+        ],
+        "source_chunk": 2,
+        "speaker": "Speaker 2",
+        "start_time": 332.189,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 6.734999999999985,
+        "end_time": 367.197,
+        "segment_timestamps": [],
+        "source_chunk": 2,
+        "speaker": "Speaker 3",
+        "start_time": 360.462,
+        "text": "",
+        "word_timestamps": []
+      },
+      {
+        "duration": 13.471,
+        "end_time": 380.668,
+        "segment_timestamps": [],
+        "source_chunk": 3,
+        "speaker": "Speaker 3",
+        "start_time": 367.197,
+        "text": "",
+        "word_timestamps": []
+      }
+    ],
+    "merged_text": "Speaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 2: \nSpeaker 1: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 2: \nSpeaker 1: \nSpeaker 2: \nSpeaker 2: \nSpeaker 1: \nSpeaker 1: \nSpeaker 1: \nSpeaker 2: \nSpeaker 2: \nSpeaker 3: \nSpeaker 3:",
+    "speaker_mapping": {
+      "SPEAKER_00": "Speaker 1",
+      "SPEAKER_01": "Speaker 2",
+      "UNKNOWN": "Speaker 3"
+    },
+    "total_segments": 44,
+    "processing_method": "pyannote_chunked_diarization_then_transcription"
+  },
+  "summary": {
+    "total_chunks": 3,
+    "successful_jobs": 3,
+    "failed_jobs": 0,
+    "total_segments": 44,
+    "speakers_detected": 3,
+    "processing_method": "pyannote_chunked_diarization_then_transcription"
+  }
+}
