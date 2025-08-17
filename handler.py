@@ -701,15 +701,52 @@ def handler(job):
                         # We have both diarization and transcription - now match them
                         logger.info(f"    Found {len(chunk_diarized_segments)} speaker segments and transcription text")
                         
-                        # Use segment-level timestamps for better matching
-                        if chunk_result.get('segment_timestamps'):
-                            transcript_segments = chunk_result['segment_timestamps']
+                        # Use segment-level timestamps for better matching, fallback to word-level
+                        transcript_segments = chunk_result.get('segment_timestamps', [])
+                        
+                        # If no segment timestamps or empty, try to use word timestamps
+                        if not transcript_segments and chunk_result.get('word_timestamps'):
+                            logger.info(f"    No segment timestamps, using word-level timestamps for matching")
+                            word_timestamps = chunk_result['word_timestamps']
+                            
+                            # Group words into segments (combine words with small gaps)
+                            transcript_segments = []
+                            if word_timestamps:
+                                current_segment = {
+                                    'start': word_timestamps[0]['start'],
+                                    'end': word_timestamps[0]['end'],
+                                    'text': word_timestamps[0]['word']
+                                }
+                                
+                                for word in word_timestamps[1:]:
+                                    # If gap is less than 1 second, combine with current segment
+                                    if word['start'] - current_segment['end'] < 1.0:
+                                        current_segment['end'] = word['end']
+                                        current_segment['text'] += ' ' + word['word']
+                                    else:
+                                        # Start new segment
+                                        transcript_segments.append(current_segment)
+                                        current_segment = {
+                                            'start': word['start'],
+                                            'end': word['end'],
+                                            'text': word['word']
+                                        }
+                                
+                                # Don't forget the last segment
+                                transcript_segments.append(current_segment)
+                        
+                        if transcript_segments:
                             logger.info(f"    Matching {len(transcript_segments)} transcript segments to speaker segments")
                             
                             for seg in transcript_segments:
-                                seg_start = seg['start']
-                                seg_end = seg['end'] 
-                                seg_text = seg['text']
+                                # Safe key access with error handling
+                                try:
+                                    seg_start = seg.get('start', 0)
+                                    seg_end = seg.get('end', 0) 
+                                    seg_text = seg.get('text', '')
+                                except Exception as seg_error:
+                                    logger.error(f"    ❌ Error accessing segment keys: {seg_error}, segment: {seg}")
+                                    continue
                                 
                                 # Find which speaker segment this transcript segment overlaps with
                                 assigned_speaker = 'UNKNOWN'
@@ -758,6 +795,7 @@ def handler(job):
                             logger.info(f"    ✅ Matched {len(transcript_segments)} segments for chunk {i+1}")
                         
                         else:
+                            logger.warning(f"    ❌ No usable timestamps found (segment: {len(chunk_result.get('segment_timestamps', []))}, word: {len(chunk_result.get('word_timestamps', []))})")
                             # Fallback: use the whole chunk text with first speaker
                             first_speaker = chunk_diarized_segments[0]['speaker'] if chunk_diarized_segments else 'UNKNOWN'
                             diarized_results.append({
@@ -768,9 +806,10 @@ def handler(job):
                                 'text': chunk_result.get('text', ''),
                                 'word_timestamps': chunk_result.get('word_timestamps', []),
                                 'segment_timestamps': chunk_result.get('segment_timestamps', []),
-                                'source_chunk': i + 1
+                                'source_chunk': i + 1,
+                                'fallback_reason': 'no_usable_timestamps'
                             })
-                            logger.info(f"    ⚠️  No segment timestamps, using whole chunk with speaker {first_speaker}")
+                            logger.info(f"    ⚠️  Using whole chunk with speaker {first_speaker} (no timestamps)")
                     
                     else:
                         # Fallback: transcribe chunk normally if diarization or transcription failed
