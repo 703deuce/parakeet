@@ -31,6 +31,9 @@ def load_model():
         # Optimize for long audio processing (up to 3 hours with local attention)
         optimize_for_long_audio()
         
+        # Configure segment timestamps for proper diarization
+        configure_segment_timestamps()
+        
         return True
     except Exception as e:
         logger.error(f"Error loading model: {str(e)}")
@@ -56,6 +59,57 @@ def optimize_for_long_audio():
     except Exception as e:
         logger.warning(f"Failed to configure long audio optimization: {str(e)}")
         logger.info("Continuing with default attention model")
+
+def configure_segment_timestamps():
+    """
+    Configure Parakeet v3 for proper segment timestamp generation
+    Enables punctuation-based segmentation for better diarization
+    """
+    global model
+    try:
+        if model:
+            logger.info("Configuring Parakeet v3 for segment timestamps with punctuation support...")
+            
+            # Access the model's decoding config
+            if hasattr(model, 'cfg') and hasattr(model.cfg, 'decoding'):
+                decoding_cfg = model.cfg.decoding
+                
+                # Enable segment separators (punctuation-based segmentation)
+                segment_separators = [".", "?", "!", ";", ":", ","]
+                if hasattr(decoding_cfg, 'segment_seperators'):
+                    decoding_cfg.segment_seperators = segment_separators
+                    logger.info("✅ Set segment separators: ['.', '?', '!', ';', ':', ',']")
+                elif hasattr(decoding_cfg, 'segment_separators'):  # Alternative spelling
+                    decoding_cfg.segment_separators = segment_separators
+                    logger.info("✅ Set segment separators: ['.', '?', '!', ';', ':', ',']")
+                
+                # Ensure punctuation and capitalization are enabled
+                if hasattr(decoding_cfg, 'punctuation'):
+                    decoding_cfg.punctuation = True
+                    logger.info("✅ Enabled punctuation support")
+                
+                if hasattr(decoding_cfg, 'capitalization'):
+                    decoding_cfg.capitalization = True  
+                    logger.info("✅ Enabled capitalization support")
+                    
+                # Set preserve alignments for better timestamp accuracy
+                if hasattr(decoding_cfg, 'preserve_alignments'):
+                    decoding_cfg.preserve_alignments = True
+                    logger.info("✅ Enabled preserve alignments for better timestamps")
+                    
+                logger.info("🎯 Parakeet v3 configured for proper segment timestamp generation")
+                return True
+                    
+            else:
+                logger.warning("⚠️ Could not access model decoding config")
+                return False
+                
+        else:
+            logger.warning("Model not loaded, cannot configure segment timestamps")
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to configure segment timestamps: {str(e)}")
+        return False
 
 def configure_streaming_mode(chunk_size_sec=2.0, left_context_sec=10.0, right_context_sec=2.0):
     """
@@ -406,11 +460,12 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
         return [(audio_path, 0.0, 0.0)]
 
 def transcribe_audio_chunk(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
-    """Transcribe a single audio chunk with Parakeet v3"""
+    """Transcribe a single audio chunk with Parakeet v3 with proper segment timestamp configuration"""
     try:
         logger.info(f"🎯 Transcribing chunk: {audio_path} (timestamps={include_timestamps})")
         
         if include_timestamps:
+            # Transcribe with timestamps (segment timestamp config done at model load time)
             output = model.transcribe([audio_path], timestamps=True)
         else:
             output = model.transcribe([audio_path])
