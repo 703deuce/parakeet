@@ -1081,13 +1081,175 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
         logger.error(f"❌ Transcription error: {str(e)}")
         return {"error": f"Transcription failed: {str(e)}"}
 
+def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use_diarization: bool, 
+                           num_speakers: int = None, hf_token: str = None, audio_format: str = "wav") -> dict:
+    """
+    Process downloaded audio file with transcription and optional diarization
+    This is the main processing function for Firebase URL workflow
+    """
+    try:
+        logger.info(f"🎯 Processing downloaded audio file: {audio_file_path}")
+        
+        # Get audio duration for metadata
+        try:
+            waveform, sample_rate = torchaudio.load(audio_file_path)
+            total_duration = waveform.shape[1] / sample_rate
+            logger.info(f"🎵 Audio loaded: {total_duration:.1f}s ({total_duration/60:.1f} minutes)")
+        except Exception as e:
+            logger.warning(f"Could not get audio duration: {str(e)}")
+            total_duration = 0
+        
+        if use_diarization:
+            # Load diarization model if needed
+            if diarization_model is None and hf_token:
+                logger.info("🎤 Loading pyannote diarization model...")
+                if not load_diarization_model(hf_token):
+                    return {"error": "Failed to load diarization model with provided HF token"}
+            elif diarization_model is None:
+                return {"error": "Diarization requested but no HF token provided"}
+            
+            # Run diarization on the complete audio file
+            logger.info("🎤 Running speaker diarization on complete audio file...")
+            diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+            
+            # Run transcription on the complete audio file
+            logger.info("📝 Running transcription on complete audio file...")
+            transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps=True)
+            
+            # Match timestamps to assign speakers
+            logger.info("🔗 Matching timestamps for speaker assignment...")
+            
+            if diarized_segments and transcription_result.get('text'):
+                # Use word-level timestamps for matching
+                word_timestamps = transcription_result.get('word_timestamps', [])
+                
+                diarized_results = []
+                
+                if word_timestamps:
+                    for word_ts in word_timestamps:
+                        word_start = word_ts['start']
+                        word_end = word_ts['end']
+                        word_text = word_ts['word']
+                        
+                        # Find which speaker segment this word falls within
+                        assigned_speaker = 'UNKNOWN'
+                        max_overlap = 0
+                        
+                        for spk_seg in diarized_segments:
+                            spk_start = spk_seg['start']
+                            spk_end = spk_seg['end']
+                            
+                            # Calculate overlap
+                            overlap_start = max(word_start, spk_start)
+                            overlap_end = min(word_end, spk_end)
+                            overlap = max(0, overlap_end - overlap_start)
+                            
+                            if overlap > max_overlap:
+                                max_overlap = overlap
+                                assigned_speaker = spk_seg['speaker']
+                        
+                        # Only assign speaker if there's meaningful overlap
+                        if max_overlap > 0.01:  # At least 10ms overlap
+                            diarized_results.append({
+                                'speaker': assigned_speaker,
+                                'start_time': word_start,
+                                'end_time': word_end,
+                                'text': word_text,
+                                'overlap_duration': max_overlap
+                            })
+                        else:
+                            diarized_results.append({
+                                'speaker': 'UNKNOWN',
+                                'start_time': word_start,
+                                'end_time': word_end,
+                                'text': word_text,
+                                'overlap_duration': 0
+                            })
+                
+                # Format diarized output
+                final_result = {
+                    'diarized_transcript': diarized_results,
+                    'audio_duration_seconds': total_duration,
+                    'chunks_processed': 1,  # Single file processing
+                    'segments_processed': len(diarized_results),
+                    'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
+                    'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+                    'diarization_model': 'pyannote/speaker-diarization-3.1',
+                    'processing_method': 'firebase_url_diarization',
+                    'chunking_method': 'none_direct_download',
+                    'long_audio_optimization': 'local_attention_enabled'
+                }
+                
+                # Also provide merged text for convenience
+                merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
+                final_result['merged_text'] = merged_text
+                
+                logger.info(f"🎉 Diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
+                return final_result
+                
+            else:
+                # Fallback: transcribe normally if diarization failed
+                logger.warning("Diarization failed, falling back to transcription only")
+                return process_downloaded_audio_transcription_only(audio_file_path, include_timestamps, total_duration)
+        
+        else:
+            # Transcription only mode
+            logger.info("📝 Processing with transcription only...")
+            return process_downloaded_audio_transcription_only(audio_file_path, include_timestamps, total_duration)
+            
+    except Exception as e:
+        logger.error(f"❌ Error processing downloaded audio: {str(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return {"error": f"Audio processing failed: {str(e)}"}
+
+def process_downloaded_audio_transcription_only(audio_file_path: str, include_timestamps: bool, total_duration: float) -> dict:
+    """
+    Process downloaded audio file with transcription only (no diarization)
+    """
+    try:
+        logger.info(f"📝 Transcribing downloaded audio file: {audio_file_path}")
+        
+        # Transcribe the whole file
+        transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        
+        # Add metadata
+        transcription_result.update({
+            'audio_duration_seconds': total_duration,
+            'chunks_processed': 1,
+            'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+            'chunking_method': 'none_direct_download',
+            'processing_method': 'firebase_url_transcription_only',
+            'long_audio_optimization': 'local_attention_enabled'
+        })
+        
+        logger.info(f"✅ Transcription completed: {len(transcription_result.get('word_timestamps', []))} words")
+        return transcription_result
+        
+    except Exception as e:
+        logger.error(f"❌ Transcription error: {str(e)}")
+        return {"error": f"Transcription failed: {str(e)}"}
+
 def handler(job):
     """
     RunPod handler function for audio transcription with DIRECT Firebase Storage integration
     
     Expected input format:
     
-    OPTION 1 - Raw File Upload (recommended):
+    OPTION 1 - Direct File URL Processing (RECOMMENDED for large files):
+    Send a file URL to RunPod, which downloads and processes it directly:
+    {
+        "input": {
+            "audio_url": "https://example.com/audio.wav",  # Direct URL to audio file
+            "audio_format": "wav",  # Audio format (wav, mp3, flac, etc.)
+            "include_timestamps": true,  # Optional: include word/segment timestamps
+            "use_diarization": true,  # Optional: enable speaker diarization
+            "num_speakers": null,  # Optional: expected number of speakers
+            "hf_token": "hf_xxx",  # Required for diarization
+        }
+    }
+    
+    OPTION 2 - Raw File Upload (for smaller files):
     POST /your-endpoint with multipart/form-data:
     - file: audio file (WAV, MP3, FLAC, etc.)
     - include_timestamps: true/false
@@ -1096,7 +1258,7 @@ def handler(job):
     - hf_token: "hf_xxx"
     - firebase_upload: true/false (optional, auto-enabled for files > 10MB)
     
-    OPTION 2 - JSON with base64 (legacy):
+    OPTION 3 - JSON with base64 (legacy, limited to 10MiB):
     {
         "input": {
             "audio_data": "base64_encoded_audio_data",  # Base64 encoded audio file
@@ -1116,31 +1278,89 @@ def handler(job):
     - NO RUNPOD API AUTHENTICATION NEEDED - goes direct to Firebase Storage
     """
     try:
-        # Handle both raw file uploads and JSON input
+        # Handle different input modes
         if "input" in job:
-            # JSON mode (legacy)
+            # JSON mode - check for audio_url first (RECOMMENDED)
             job_input = job["input"]
             
-            # Validate required inputs for JSON mode
-            if "audio_data" not in job_input:
-                return {"error": "Missing required parameter: audio_data"}
-            
-            # Get all parameters
-            audio_data = job_input["audio_data"]
-            audio_format = job_input.get("audio_format", "wav")
-            include_timestamps = job_input.get("include_timestamps", True)
-            use_diarization = job_input.get("use_diarization", True)
-            num_speakers = job_input.get("num_speakers", None)
-            hf_token = job_input.get("hf_token", None)
-            firebase_upload = job_input.get("firebase_upload", False)
-            
-            # Decode base64 audio data
-            try:
-                audio_bytes = base64.b64decode(audio_data)
-            except Exception as e:
-                return {"error": f"Invalid base64 audio data: {str(e)}"}
+            # OPTION 1: Direct Firebase URL (RECOMMENDED - no size limits!)
+            if "audio_url" in job_input:
+                audio_url = job_input["audio_url"]
+                audio_format = job_input.get("audio_format", "wav")
+                include_timestamps = job_input.get("include_timestamps", True)
+                use_diarization = job_input.get("use_diarization", True)
+                num_speakers = job_input.get("num_speakers", None)
+                hf_token = job_input.get("hf_token", None)
                 
-            logger.info(f"📦 JSON mode: Received base64 audio data")
+                logger.info(f"🌐 URL mode: Processing audio from Firebase URL")
+                logger.info(f"🔗 URL: {audio_url[:50]}...")
+                
+                # Download file from Firebase URL
+                try:
+                    local_audio_file = download_from_firebase(audio_url)
+                    if not local_audio_file:
+                        return {"error": "Failed to download audio from Firebase URL"}
+                    
+                    # Get file size for logging
+                    file_size = os.path.getsize(local_audio_file)
+                    file_size_mb = file_size / 1024 / 1024
+                    logger.info(f"📁 Downloaded: {local_audio_file} ({file_size_mb:.1f}MB)")
+                    
+                    # Process the downloaded file directly
+                    result = process_downloaded_audio(
+                        audio_file_path=local_audio_file,
+                        include_timestamps=include_timestamps,
+                        use_diarization=use_diarization,
+                        num_speakers=num_speakers,
+                        hf_token=hf_token,
+                        audio_format=audio_format
+                    )
+                    
+                    # Clean up downloaded file
+                    try:
+                        os.unlink(local_audio_file)
+                        logger.info(f"🧹 Cleaned up downloaded file: {local_audio_file}")
+                    except:
+                        pass
+                    
+                    # Add metadata
+                    result.update({
+                        'workflow': 'firebase_url_direct_download',
+                        'audio_url': audio_url,
+                        'file_size_mb': file_size_mb,
+                        'processing_method': 'url_download_no_base64'
+                    })
+                    
+                    logger.info(f"🎉 Firebase URL workflow completed successfully!")
+                    return result
+                    
+                except Exception as e:
+                    logger.error(f"❌ Firebase URL download failed: {str(e)}")
+                    return {"error": f"Failed to download from Firebase URL: {str(e)}"}
+            
+            # OPTION 2: Legacy base64 mode (limited to 10MiB)
+            elif "audio_data" in job_input:
+                logger.info(f"📦 JSON mode: Received base64 audio data (limited to 10MiB)")
+                
+                # Get all parameters
+                audio_data = job_input["audio_data"]
+                audio_format = job_input.get("audio_format", "wav")
+                include_timestamps = job_input.get("include_timestamps", True)
+                use_diarization = job_input.get("use_diarization", True)
+                num_speakers = job_input.get("num_speakers", None)
+                hf_token = job_input.get("hf_token", None)
+                firebase_upload = job_input.get("firebase_upload", False)
+                
+                # Decode base64 audio data
+                try:
+                    audio_bytes = base64.b64decode(audio_data)
+                except Exception as e:
+                    return {"error": f"Invalid base64 audio data: {str(e)}"}
+                    
+                logger.info(f"📦 JSON mode: Received base64 audio data")
+                
+            else:
+                return {"error": "Missing required parameter: audio_url or audio_data"}
             
         else:
             # Raw file upload mode (recommended)
@@ -1323,8 +1543,8 @@ if __name__ == "__main__":
         logger.info("Pyannote diarization model will be loaded on-demand when diarization is requested")
         
         logger.info("Starting RunPod serverless handler with enhanced Parakeet v3 capabilities...")
-        logger.info("🚀 FEATURES: Automatic Firebase Storage, pyannote diarization, long audio support (3+ hours), streaming mode")
-        logger.info("🔥 FIREBASE: Auto-upload files >10MB, process without chunking for better accuracy")
+        logger.info("🚀 FEATURES: Firebase URL workflow, pyannote diarization, long audio support (3+ hours), streaming mode")
+        logger.info("🌐 FIREBASE URL: Send Firebase URL only - no size limits, no base64, direct processing")
         logger.info("🎯 MODEL: NVIDIA Parakeet TDT 0.6B v3 with 25 language support and local attention optimization")
         runpod.serverless.start({"handler": handler})
     else:
