@@ -530,10 +530,10 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
         logger.error(f"Error in basic splitting: {str(e)}")
         return [(audio_path, 0.0, 0.0)]
 
-def transcribe_audio_chunk(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
-    """Transcribe a single audio chunk with Parakeet v3 with proper segment timestamp configuration"""
+def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
+    """Transcribe entire audio file directly with Parakeet v3 (NO CHUNKING - processes whole file at once)"""
     try:
-        logger.info(f"🎯 Transcribing chunk: {audio_path} (timestamps={include_timestamps})")
+        logger.info(f"🎯 Transcribing ENTIRE FILE directly: {audio_path} (timestamps={include_timestamps}) - NO CHUNKING!")
         
         # Log detailed audio file info for debugging
         if os.path.exists(audio_path):
@@ -876,7 +876,7 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
             
             # Step 3: Run transcription on the WHOLE audio file  
             logger.info("  Step 2: Transcription on complete audio file")
-            transcription_result = transcribe_audio_chunk(audio_path, include_timestamps=True)
+            transcription_result = transcribe_audio_file_direct(audio_path, include_timestamps=True)
             
             # Step 4: Match timestamps to assign speakers
             logger.info("  Step 3: Matching timestamps for speaker assignment")
@@ -1040,7 +1040,7 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
             logger.info(f"Processing Firebase audio with regular transcription...")
             
             # Transcribe the whole file
-            transcription_result = transcribe_audio_chunk(audio_path, include_timestamps)
+            transcription_result = transcribe_audio_file_direct(audio_path, include_timestamps)
             
             # Add metadata
             transcription_result.update({
@@ -1088,7 +1088,7 @@ def process_audio_with_diarization(audio_file_path: str, include_timestamps: boo
         diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
         
         # Run transcription
-        transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        transcription_result = transcribe_audio_file_direct(audio_file_path, include_timestamps)
         
         # Combine results
         if diarized_segments and transcription_result.get('text'):
@@ -1163,14 +1163,16 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
     try:
         logger.info(f"📝 Transcribing audio file: {audio_file_path}")
         
-        # Use the existing transcription function
-        result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        # Use the direct transcription function (NO CHUNKING!)
+        result = transcribe_audio_file_direct(audio_file_path, include_timestamps)
         
         # Add metadata
         result.update({
-            'processing_method': 'direct_firebase_transcription',
-            'no_chunking_needed': True,
-            'file_path': audio_file_path
+            'processing_method': 'direct_file_transcription_no_chunking',
+            'whole_file_processed': True,
+            'no_chunking_used': True,
+            'file_path': audio_file_path,
+            'advantage': 'Entire file processed at once for maximum accuracy'
         })
         
         return result
@@ -1308,17 +1310,18 @@ def process_downloaded_audio_transcription_only(audio_file_path: str, include_ti
     try:
         logger.info(f"📝 Transcribing downloaded audio file: {audio_file_path}")
         
-        # Transcribe the whole file
-        transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        # Transcribe the whole file directly (NO CHUNKING!)
+        transcription_result = transcribe_audio_file_direct(audio_file_path, include_timestamps)
         
         # Add metadata
         transcription_result.update({
             'audio_duration_seconds': total_duration,
-            'chunks_processed': 1,
+            'whole_file_processed': True,
+            'no_chunking_used': True,
             'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-            'chunking_method': 'none_direct_download',
-            'processing_method': 'firebase_url_transcription_only',
-            'long_audio_optimization': 'local_attention_enabled'
+            'processing_method': 'direct_firebase_transcription_no_chunking',
+            'long_audio_optimization': 'local_attention_enabled',
+            'advantage': 'Entire file processed at once for better accuracy'
         })
         
         logger.info(f"✅ Transcription completed: {len(transcription_result.get('word_timestamps', []))} words")
