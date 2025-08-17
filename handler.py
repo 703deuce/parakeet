@@ -984,19 +984,26 @@ def handler(job):
     RunPod handler function for audio transcription with smart silence-based chunking and optional speaker diarization
     
     Expected input format:
+    
+    OPTION 1 - Raw File Upload (recommended):
+    POST /your-endpoint with multipart/form-data:
+    - file: audio file (WAV, MP3, FLAC, etc.)
+    - include_timestamps: true/false
+    - use_diarization: true/false
+    - num_speakers: number (optional)
+    - hf_token: "hf_xxx"
+    - firebase_upload: true/false (optional, auto-enabled for files > 10MB)
+    
+    OPTION 2 - JSON with base64 (legacy):
     {
         "input": {
             "audio_data": "base64_encoded_audio_data",  # Base64 encoded audio file
-            "audio_format": "wav",  # Optional: audio format (wav, mp3, flac, etc.)
+            "audio_format": "wav",  # Audio format (wav, mp3, flac, etc.)
             "include_timestamps": true,  # Optional: include word/segment timestamps
             "use_diarization": true,  # Optional: enable speaker diarization
-            "num_speakers": null,  # Optional: expected number of speakers (null for auto-detection)
-            "hf_token": "hf_xxx",  # Required for diarization: HuggingFace token for pyannote.audio access
-            "firebase_upload": true,  # Optional: force Firebase upload (auto-enabled for files > 10MB)
-            "streaming_mode": false,  # Optional: enable streaming mode for real-time processing
-            "streaming_chunk_sec": 2.0,  # Optional: streaming chunk size in seconds (default 2.0)
-            "streaming_left_context_sec": 10.0,  # Optional: left context for streaming (default 10.0)
-            "streaming_right_context_sec": 2.0  # Optional: right context for streaming (default 2.0)
+            "num_speakers": null,  # Optional: expected number of speakers
+            "hf_token": "hf_xxx",  # Required for diarization
+            "firebase_upload": true  # Optional: force Firebase upload
         }
     }
     
@@ -1006,32 +1013,57 @@ def handler(job):
     - Firebase upload provides better accuracy and faster processing for all file sizes
     """
     try:
-        job_input = job["input"]
-        
-        # Validate required inputs
-        if "audio_data" not in job_input:
-            return {"error": "Missing required parameter: audio_data"}
-        
-        # Get all parameters
-        audio_data = job_input["audio_data"]
-        audio_format = job_input.get("audio_format", "wav")
-        include_timestamps = job_input.get("include_timestamps", True)
-        use_diarization = job_input.get("use_diarization", True)
-        num_speakers = job_input.get("num_speakers", None)
-        hf_token = job_input.get("hf_token", None)
-        firebase_upload = job_input.get("firebase_upload", False)  # Force Firebase upload
+        # Handle both raw file uploads and JSON input
+        if "input" in job:
+            # JSON mode (legacy)
+            job_input = job["input"]
+            
+            # Validate required inputs for JSON mode
+            if "audio_data" not in job_input:
+                return {"error": "Missing required parameter: audio_data"}
+            
+            # Get all parameters
+            audio_data = job_input["audio_data"]
+            audio_format = job_input.get("audio_format", "wav")
+            include_timestamps = job_input.get("include_timestamps", True)
+            use_diarization = job_input.get("use_diarization", True)
+            num_speakers = job_input.get("num_speakers", None)
+            hf_token = job_input.get("hf_token", None)
+            firebase_upload = job_input.get("firebase_upload", False)
+            
+            # Decode base64 audio data
+            try:
+                audio_bytes = base64.b64decode(audio_data)
+            except Exception as e:
+                return {"error": f"Invalid base64 audio data: {str(e)}"}
+                
+            logger.info(f"📦 JSON mode: Received base64 audio data")
+            
+        else:
+            # Raw file upload mode (recommended)
+            logger.info(f"📁 Raw file mode: Processing direct file upload")
+            
+            # Extract parameters from form data or job
+            include_timestamps = job.get("include_timestamps", True)
+            use_diarization = job.get("use_diarization", True) 
+            num_speakers = job.get("num_speakers", None)
+            hf_token = job.get("hf_token", None)
+            firebase_upload = job.get("firebase_upload", False)
+            
+            # Get raw audio file data
+            if "file" in job:
+                audio_bytes = job["file"]  # Raw file bytes
+                # Detect format from file extension or content
+                filename = job.get("filename", "audio.wav")
+                audio_format = filename.split('.')[-1].lower() if '.' in filename else "wav"
+            else:
+                return {"error": "No audio file provided. Use 'file' parameter for raw upload or 'input.audio_data' for base64"}
         
         # Streaming mode parameters (Parakeet v3 feature)
-        streaming_mode = job_input.get("streaming_mode", False)
-        streaming_chunk_sec = job_input.get("streaming_chunk_sec", 2.0)
-        streaming_left_context_sec = job_input.get("streaming_left_context_sec", 10.0)
-        streaming_right_context_sec = job_input.get("streaming_right_context_sec", 2.0)
-        
-        # Decode base64 audio data
-        try:
-            audio_bytes = base64.b64decode(audio_data)
-        except Exception as e:
-            return {"error": f"Invalid base64 audio data: {str(e)}"}
+        streaming_mode = job.get("streaming_mode", False)
+        streaming_chunk_sec = job.get("streaming_chunk_sec", 2.0)
+        streaming_left_context_sec = job.get("streaming_left_context_sec", 10.0)
+        streaming_right_context_sec = job.get("streaming_right_context_sec", 2.0)
         
         file_size_mb = len(audio_bytes) / 1024 / 1024
         logger.info(f"📁 Received audio file: {file_size_mb:.1f}MB, format={audio_format}")
