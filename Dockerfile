@@ -4,8 +4,9 @@ FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including C++ compiler for NeMo builds
 RUN apt-get update && apt-get install -y \
+    build-essential \
     ffmpeg \
     libsndfile1 \
     sox \
