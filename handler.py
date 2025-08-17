@@ -535,11 +535,54 @@ def transcribe_audio_chunk(audio_path: str, include_timestamps: bool = False) ->
     try:
         logger.info(f"🎯 Transcribing chunk: {audio_path} (timestamps={include_timestamps})")
         
+        # Log detailed audio file info for debugging
+        if os.path.exists(audio_path):
+            file_size = os.path.getsize(audio_path)
+            logger.info(f"🎵 Audio file exists: {audio_path} ({file_size} bytes)")
+            
+            # Check audio with pydub for debugging
+            try:
+                from pydub import AudioSegment
+                audio = AudioSegment.from_file(audio_path)
+                duration_ms = len(audio)
+                channels = audio.channels
+                frame_rate = audio.frame_rate
+                logger.info(f"🎵 Audio info: {duration_ms}ms, {channels}ch, {frame_rate}Hz")
+                
+                # Check if audio is mostly silent
+                if duration_ms > 0:
+                    samples = audio.get_array_of_samples()
+                    if len(samples) > 0:
+                        max_amplitude = max(abs(sample) for sample in samples)
+                        logger.info(f"🔊 Max amplitude: {max_amplitude}")
+                        if max_amplitude < 100:  # Very quiet threshold
+                            logger.warning("⚠️ Audio appears to be very quiet or silent")
+                    else:
+                        logger.warning("⚠️ No audio samples found")
+                else:
+                    logger.warning("⚠️ Audio duration is 0ms")
+                    
+            except Exception as audio_debug_error:
+                logger.warning(f"⚠️ Audio debug failed: {str(audio_debug_error)}")
+        else:
+            logger.error(f"❌ Audio file does not exist: {audio_path}")
+            return {"error": f"Audio file not found: {audio_path}"}
+        
+        # Check if model is loaded
+        if model is None:
+            logger.error("❌ Parakeet model is not loaded!")
+            return {"error": "Model not loaded"}
+        
+        logger.info("🚀 Starting Parakeet transcription...")
+        
         if include_timestamps:
             # Transcribe with timestamps (segment timestamp config done at model load time)
             output = model.transcribe([audio_path], timestamps=True)
         else:
             output = model.transcribe([audio_path])
+        
+        logger.info(f"🔍 Raw Parakeet output type: {type(output)}")
+        logger.info(f"🔍 Raw Parakeet output length: {len(output) if hasattr(output, '__len__') else 'N/A'}")
         
         # 🔍 LOG RAW RESPONSE STRUCTURE FOR DEBUGGING
         logger.info(f"📊 Raw Parakeet v3 output type: {type(output)}")
@@ -1395,6 +1438,8 @@ def handler(job):
                     
                 except Exception as e:
                     logger.error(f"❌ Firebase URL download failed: {str(e)}")
+                    # Clear memory on error
+                    clear_gpu_memory()
                     return {"error": f"Failed to download from Firebase URL: {str(e)}"}
             
             # OPTION 2: Legacy base64 mode (limited to 10MiB)

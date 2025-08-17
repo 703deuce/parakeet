@@ -17,7 +17,7 @@ RUN pip install --upgrade pip
 
 # Install core dependencies in optimal order (CUDA-enabled PyTorch)
 RUN pip install -U torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
-RUN pip install cuda-python
+RUN pip install "cuda-python>=12.3"
 RUN pip install numpy soundfile librosa
 RUN pip install hydra-core omegaconf pyyaml
 RUN pip install lhotse

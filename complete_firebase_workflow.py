@@ -188,6 +188,7 @@ def poll_runpod_job(job_id: str, max_wait_minutes: int = 15) -> tuple[bool, dict
                 if status == 'COMPLETED':
                     print("✅ Job completed successfully!")
                     output = result.get('output', {})
+                    print(f"🔍 Raw job output: {output}")
                     return True, output
                 elif status == 'FAILED':
                     print("❌ Job failed!")
@@ -249,6 +250,7 @@ def send_to_runpod(firebase_url: str) -> tuple[bool, str]:
         
         if response.status_code == 200:
             result = response.json()
+            print(f"🔍 Raw RunPod response: {result}")
             
             # Check if this is an async job or immediate result
             if 'id' in result and 'status' in result:

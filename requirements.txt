@@ -2,7 +2,7 @@ runpod>=1.5.0
 torch
 torchaudio
 torchvision
-cuda-python
+cuda-python>=12.3
 nemo_toolkit[asr]
 hydra-core
 omegaconf
