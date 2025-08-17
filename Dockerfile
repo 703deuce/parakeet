@@ -16,7 +16,7 @@ RUN pip install --upgrade pip
 
 # Install core dependencies
 RUN pip install -U torch torchaudio torchvision
-RUN pip install nemo_toolkit[asr]
+RUN pip install nemo_toolkit
 RUN pip install pyannote.audio
 RUN pip install pydub
 RUN pip install runpod>=1.5.0

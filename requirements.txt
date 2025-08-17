@@ -1,4 +1,4 @@
 runpod>=1.5.0
-nemo_toolkit[asr]
+nemo_toolkit
 pydub
 pyannote.audio
