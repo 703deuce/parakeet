@@ -1,7 +1,7 @@
 runpod>=1.5.0
 torch
 torchaudio
-nemo_toolkit
+nemo_toolkit[asr]
 hydra-core
 omegaconf
 pyyaml

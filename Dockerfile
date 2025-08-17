@@ -24,7 +24,7 @@ RUN pip install tqdm requests transformers
 RUN pip install sentencepiece scikit-learn pandas joblib
 RUN pip install matplotlib soxr resampy jiwer
 RUN pip install pooch numba llvmlite platformdirs future lazy_loader
-RUN pip install nemo_toolkit
+RUN pip install "nemo_toolkit[asr]"
 RUN pip install pyannote.audio
 RUN pip install pydub
 RUN pip install runpod>=1.5.0
