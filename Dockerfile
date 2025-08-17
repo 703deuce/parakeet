@@ -15,9 +15,13 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Install core dependencies
+# Install core dependencies in optimal order
 RUN pip install -U torch torchaudio torchvision
-RUN pip install hydra-core
+RUN pip install numpy soundfile
+RUN pip install hydra-core omegaconf pyyaml
+RUN pip install lhotse
+RUN pip install tqdm requests transformers
+RUN pip install sentencepiece scikit-learn matplotlib soxr
 RUN pip install nemo_toolkit
 RUN pip install pyannote.audio
 RUN pip install pydub
