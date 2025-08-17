@@ -32,20 +32,44 @@ def load_model():
         logger.error(f"Error loading model: {str(e)}")
         return False
 
-def load_diarization_model():
+def load_diarization_model(hf_token=None):
     """
     Load pyannote.audio diarization pipeline
     """
     global diarization_model
     try:
         from pyannote.audio import Pipeline
+        import torch
         logger.info("Loading pyannote.audio speaker diarization pipeline...")
-        # Load the latest pretrained pipeline (no auth token needed for public models)
-        diarization_model = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+        
+        # Try to load with HuggingFace token if provided
+        if hf_token:
+            logger.info("Using provided HuggingFace token for pyannote access")
+            diarization_model = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1", 
+                use_auth_token=hf_token
+            )
+        else:
+            logger.error("HuggingFace token is required for pyannote.audio models")
+            logger.error("Please provide hf_token parameter in your request")
+            logger.error("You can get a token at https://hf.co/settings/tokens")
+            return False
+            
+        # Move pipeline to GPU if available
+        if torch.cuda.is_available():
+            logger.info("Moving pyannote pipeline to GPU")
+            diarization_model.to(torch.device("cuda"))
+        else:
+            logger.warning("CUDA not available, using CPU for diarization")
+            
         logger.info("Pyannote diarization pipeline loaded successfully")
         return True
     except Exception as e:
         logger.error(f"Error loading pyannote diarization pipeline: {str(e)}")
+        logger.error("Make sure you have:")
+        logger.error("1. Accepted pyannote/segmentation-3.0 user conditions")
+        logger.error("2. Accepted pyannote/speaker-diarization-3.1 user conditions") 
+        logger.error("3. Created a valid HuggingFace access token")
         return False
 
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
@@ -416,7 +440,8 @@ def handler(job):
             "include_timestamps": true,  # Optional: include word/segment timestamps
             "chunk_duration": 300,  # Optional: target chunk duration in seconds (default 5 minutes)
             "use_diarization": false,  # Optional: enable speaker diarization (default false)
-            "num_speakers": null  # Optional: expected number of speakers (null for auto-detection)
+            "num_speakers": null,  # Optional: expected number of speakers (null for auto-detection)
+            "hf_token": "hf_xxx"  # Optional: HuggingFace token for pyannote.audio access
         }
     }
     """
@@ -434,8 +459,19 @@ def handler(job):
         chunk_duration = job_input.get("chunk_duration", 300)  # 5 minutes default
         use_diarization = job_input.get("use_diarization", False)
         num_speakers = job_input.get("num_speakers", None)
+        hf_token = job_input.get("hf_token", None)
         
         logger.info(f"Processing transcription request: format={audio_format}, timestamps={include_timestamps}, chunk_duration={chunk_duration}s, diarization={use_diarization}")
+        
+        # If diarization is requested and HF token is provided, reload the diarization model
+        if use_diarization and hf_token and diarization_model is None:
+            logger.info("Diarization requested with HF token - loading pyannote model...")
+            if not load_diarization_model(hf_token):
+                return {"error": "Failed to load diarization model with provided HF token"}
+        elif use_diarization and diarization_model is None:
+            logger.info("Diarization requested - attempting to load pyannote model without token...")
+            if not load_diarization_model():
+                return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
         
         # Decode base64 audio data
         try:
@@ -672,12 +708,8 @@ if __name__ == "__main__":
     if load_model():
         logger.info("Parakeet model loaded successfully")
         
-        # Load pyannote diarization model
-        logger.info("Loading pyannote.audio diarization model...")
-        if load_diarization_model():
-            logger.info("Pyannote diarization model loaded successfully")
-        else:
-            logger.warning("Failed to load pyannote diarization model - diarization will be disabled")
+        # Diarization model will be loaded on-demand when needed (with HF token if provided)
+        logger.info("Pyannote diarization model will be loaded on-demand when diarization is requested")
         
         logger.info("Starting RunPod serverless handler with smart chunking and pyannote diarization...")
         logger.info("IMPROVED: Now using pyannote.audio for reliable speaker diarization")

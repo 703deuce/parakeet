@@ -1,5 +1,5 @@
-# Use NVIDIA PyTorch base image with CUDA support
-FROM nvcr.io/nvidia/pytorch:24.01-py3
+# Use public PyTorch base image with CUDA support
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 # Set working directory
 WORKDIR /app
@@ -14,14 +14,12 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-
-# Install dependencies following official documentation
-# First install latest PyTorch, then other ML dependencies
+# Install core dependencies
 RUN pip install -U torch torchaudio torchvision
-RUN pip install -U nemo_toolkit[asr]
-RUN pip install -r requirements.txt
+RUN pip install nemo_toolkit[asr]
+RUN pip install pyannote.audio
+RUN pip install pydub
+RUN pip install runpod>=1.5.0
 
 # Copy the handler script
 COPY handler.py .
