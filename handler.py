@@ -22,9 +22,9 @@ def load_model():
     global model
     try:
         import nemo.collections.asr as nemo_asr
-        logger.info("Loading NVIDIA Parakeet TDT 0.6B v2 model...")
+        logger.info("Loading NVIDIA Parakeet TDT 0.6B v3 model...")
         model = nemo_asr.models.ASRModel.from_pretrained(
-            model_name="nvidia/parakeet-tdt-0.6b-v2"
+            model_name="nvidia/parakeet-tdt-0.6b-v3"
         )
         logger.info("Model loaded successfully")
         return True
@@ -647,7 +647,7 @@ def handler(job):
                     'chunks_processed': len(chunk_files),
                     'segments_processed': len(diarized_results),
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
-                    'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
+                    'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
                     'diarization_model': 'pyannote/speaker-diarization-3.1',
                     'processing_method': 'diarization_then_transcription_then_match',
                     'chunking_method': 'smart_silence_based',
@@ -684,7 +684,7 @@ def handler(job):
                 final_result.update({
                     'audio_duration_seconds': total_duration,
                     'chunks_processed': len(chunk_files),
-                    'model_used': 'nvidia/parakeet-tdt-0.6b-v2',
+                    'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
                     'chunking_method': 'smart_silence_based',
                     'processing_method': 'regular_transcription',
                     'chunk_boundaries': [{'start': start, 'end': end} for start, end in chunk_times]
@@ -704,7 +704,7 @@ def handler(job):
 
 # Initialize model when the container starts
 if __name__ == "__main__":
-    logger.info("Initializing NVIDIA Parakeet TDT 0.6B v2 model...")
+    logger.info("Initializing NVIDIA Parakeet TDT 0.6B v3 model...")
     if load_model():
         logger.info("Parakeet model loaded successfully")
         
