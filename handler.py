@@ -979,9 +979,111 @@ def cleanup_temp_files(file_paths: List[str]):
         except Exception as e:
             logger.warning(f"Could not delete temp file {file_path}: {str(e)}")
 
+def process_audio_with_diarization(audio_file_path: str, include_timestamps: bool, num_speakers: int = None) -> dict:
+    """
+    Process audio file with speaker diarization (direct approach)
+    """
+    try:
+        logger.info(f"🎤 Processing audio with diarization: {audio_file_path}")
+        
+        # Run diarization
+        diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+        
+        # Run transcription
+        transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        
+        # Combine results
+        if diarized_segments and transcription_result.get('text'):
+            # Match timestamps to assign speakers
+            diarized_results = []
+            
+            # Use word-level timestamps for matching
+            word_timestamps = transcription_result.get('word_timestamps', [])
+            
+            if word_timestamps:
+                for word_ts in word_timestamps:
+                    word_start = word_ts['start']
+                    word_end = word_ts['end']
+                    word_text = word_ts['word']
+                    
+                    # Find which speaker segment this word falls within
+                    assigned_speaker = 'UNKNOWN'
+                    max_overlap = 0
+                    
+                    for spk_seg in diarized_segments:
+                        spk_start = spk_seg['start']
+                        spk_end = spk_seg['end']
+                        
+                        # Calculate overlap
+                        overlap_start = max(word_start, spk_start)
+                        overlap_end = min(word_end, spk_end)
+                        overlap = max(0, overlap_end - overlap_start)
+                        
+                        if overlap > max_overlap:
+                            max_overlap = overlap
+                            assigned_speaker = spk_seg['speaker']
+                    
+                    # Only assign speaker if there's meaningful overlap
+                    if max_overlap > 0.01:  # At least 10ms overlap
+                        diarized_results.append({
+                            'speaker': assigned_speaker,
+                            'start_time': word_start,
+                            'end_time': word_end,
+                            'text': word_text,
+                            'overlap_duration': max_overlap
+                        })
+                    else:
+                        diarized_results.append({
+                            'speaker': 'UNKNOWN',
+                            'start_time': word_start,
+                            'end_time': word_end,
+                            'text': word_text,
+                            'overlap_duration': 0
+                        })
+            
+            return {
+                'diarized_transcript': diarized_results,
+                'text': transcription_result.get('text', ''),
+                'word_timestamps': word_timestamps,
+                'audio_duration_seconds': transcription_result.get('audio_duration_seconds', 0),
+                'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+                'diarization_model': 'pyannote/speaker-diarization-3.1',
+                'processing_method': 'direct_firebase_diarization'
+            }
+        else:
+            # Fallback to transcription only
+            return transcription_result
+            
+    except Exception as e:
+        logger.error(f"❌ Diarization processing error: {str(e)}")
+        return {"error": f"Diarization processing failed: {str(e)}"}
+
+def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dict:
+    """
+    Transcribe audio file directly (no chunking needed)
+    """
+    try:
+        logger.info(f"📝 Transcribing audio file: {audio_file_path}")
+        
+        # Use the existing transcription function
+        result = transcribe_audio_chunk(audio_file_path, include_timestamps)
+        
+        # Add metadata
+        result.update({
+            'processing_method': 'direct_firebase_transcription',
+            'no_chunking_needed': True,
+            'file_path': audio_file_path
+        })
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Transcription error: {str(e)}")
+        return {"error": f"Transcription failed: {str(e)}"}
+
 def handler(job):
     """
-    RunPod handler function for audio transcription with smart silence-based chunking and optional speaker diarization
+    RunPod handler function for audio transcription with DIRECT Firebase Storage integration
     
     Expected input format:
     
@@ -1007,10 +1109,11 @@ def handler(job):
         }
     }
     
-    AUTOMATIC BEHAVIOR:
+    DIRECT FIREBASE WORKFLOW:
     - Files > 10MB: Automatically uploaded to Firebase, processed without chunking
     - Files < 10MB: Processed directly with chunking (unless firebase_upload=true)
     - Firebase upload provides better accuracy and faster processing for all file sizes
+    - NO RUNPOD API AUTHENTICATION NEEDED - goes direct to Firebase Storage
     """
     try:
         # Handle both raw file uploads and JSON input
@@ -1072,14 +1175,20 @@ def handler(job):
         use_firebase = firebase_upload or file_size_mb > 10.0
         
         if use_firebase:
-            logger.info(f"🔥 Using Firebase Storage workflow (file size: {file_size_mb:.1f}MB, forced: {firebase_upload})")
+            logger.info(f"🔥 Using DIRECT Firebase Storage workflow (file size: {file_size_mb:.1f}MB, forced: {firebase_upload})")
             
             try:
-                # Step 1: Upload to Firebase Storage
-                logger.info("📤 Step 1: Uploading audio to Firebase Storage...")
+                # Step 1: Upload to Firebase Storage (direct approach - no RunPod API needed)
+                logger.info("📤 Step 1: Direct upload to Firebase Storage...")
                 firebase_url = upload_to_firebase_storage(audio_bytes, audio_format)
                 
-                # Step 2: Configure streaming mode if requested
+                # Step 2: Download from Firebase Storage (direct approach)
+                logger.info("📥 Step 2: Direct download from Firebase Storage...")
+                local_audio_file = download_from_firebase(firebase_url)
+                if not local_audio_file:
+                    raise Exception("Failed to download audio from Firebase Storage")
+                
+                # Step 3: Configure streaming mode if requested
                 streaming_config = None
                 if streaming_mode:
                     logger.info("🚀 Configuring Parakeet v3 streaming mode...")
@@ -1093,15 +1202,40 @@ def handler(job):
                     else:
                         logger.warning("⚠️ Failed to configure streaming mode, continuing with standard processing")
                 
-                # Step 3: Process via Firebase workflow (no chunking!)
-                logger.info("🎯 Step 2: Processing via Firebase workflow (no chunking needed)...")
-                result = process_firebase_audio(
-                    firebase_url=firebase_url,
-                    use_diarization=use_diarization,
-                    include_timestamps=include_timestamps,
-                    num_speakers=num_speakers,
-                    hf_token=hf_token
-                )
+                # Step 4: Process audio directly (no chunking needed!)
+                logger.info("🎯 Step 3: Processing audio directly from Firebase download (no chunking needed)...")
+                
+                # Load diarization model if needed
+                if use_diarization and hf_token and diarization_model is None:
+                    logger.info("Diarization requested with HF token - loading pyannote model...")
+                    if not load_diarization_model(hf_token):
+                        return {"error": "Failed to load diarization model with provided HF token"}
+                elif use_diarization and diarization_model is None:
+                    logger.info("Diarization requested - attempting to load pyannote model without token...")
+                    if not load_diarization_model():
+                        return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                
+                # Process the audio file directly
+                if use_diarization:
+                    logger.info("🎤 Processing with speaker diarization...")
+                    result = process_audio_with_diarization(
+                        audio_file_path=local_audio_file,
+                        include_timestamps=include_timestamps,
+                        num_speakers=num_speakers
+                    )
+                else:
+                    logger.info("📝 Processing with transcription only...")
+                    result = transcribe_audio_file(
+                        audio_file_path=local_audio_file,
+                        include_timestamps=include_timestamps
+                    )
+                
+                # Clean up temporary file
+                try:
+                    os.unlink(local_audio_file)
+                    logger.info(f"🧹 Cleaned up temporary file: {local_audio_file}")
+                except:
+                    pass
                 
                 # Add Firebase metadata to result
                 result.update({
@@ -1109,15 +1243,16 @@ def handler(job):
                     'original_file_size_mb': file_size_mb,
                     'firebase_url': firebase_url,
                     'streaming_config': streaming_config,
-                    'processing_decision': f'firebase_auto' if file_size_mb > 10.0 else 'firebase_forced'
+                    'processing_decision': f'direct_firebase_auto' if file_size_mb > 10.0 else 'direct_firebase_forced',
+                    'workflow_type': 'direct_firebase_no_chunking'
                 })
                 
-                logger.info(f"🎉 Firebase workflow completed successfully!")
+                logger.info(f"🎉 DIRECT Firebase workflow completed successfully!")
                 return result
                 
             except Exception as e:
-                logger.error(f"❌ Firebase workflow failed: {str(e)}")
-                return {"error": f"Firebase processing failed: {str(e)}"}
+                logger.error(f"❌ DIRECT Firebase workflow failed: {str(e)}")
+                return {"error": f"Direct Firebase processing failed: {str(e)}"}
         
         else:
             logger.info(f"📦 Using legacy chunking workflow (file size: {file_size_mb:.1f}MB)")
