@@ -17,6 +17,7 @@ RUN pip install --upgrade pip
 
 # Install core dependencies
 RUN pip install -U torch torchaudio torchvision
+RUN pip install hydra-core
 RUN pip install nemo_toolkit
 RUN pip install pyannote.audio
 RUN pip install pydub
