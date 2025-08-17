@@ -17,11 +17,13 @@ RUN pip install --upgrade pip
 
 # Install core dependencies in optimal order
 RUN pip install -U torch torchaudio torchvision
-RUN pip install numpy soundfile
+RUN pip install numpy soundfile librosa
 RUN pip install hydra-core omegaconf pyyaml
 RUN pip install lhotse
 RUN pip install tqdm requests transformers
-RUN pip install sentencepiece scikit-learn matplotlib soxr jiwer
+RUN pip install sentencepiece scikit-learn pandas joblib
+RUN pip install matplotlib soxr resampy jiwer
+RUN pip install pooch numba llvmlite platformdirs future lazy_loader
 RUN pip install nemo_toolkit
 RUN pip install pyannote.audio
 RUN pip install pydub
