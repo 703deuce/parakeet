@@ -406,29 +406,107 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
         return [(audio_path, 0.0, 0.0)]
 
 def transcribe_audio_chunk(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
-    """Transcribe a single audio chunk"""
+    """Transcribe a single audio chunk with Parakeet v3"""
     try:
+        logger.info(f"🎯 Transcribing chunk: {audio_path} (timestamps={include_timestamps})")
+        
         if include_timestamps:
             output = model.transcribe([audio_path], timestamps=True)
-            result = {
-                'text': output[0].text,
-                'word_timestamps': output[0].timestamp.get('word', []),
-                'segment_timestamps': output[0].timestamp.get('segment', []),
-                'char_timestamps': output[0].timestamp.get('char', [])
-            }
         else:
             output = model.transcribe([audio_path])
-            result = {
-                'text': output[0].text,
-                'word_timestamps': [],
-                'segment_timestamps': [],
-                'char_timestamps': []
-            }
         
+        # 🔍 LOG RAW RESPONSE STRUCTURE FOR DEBUGGING
+        logger.info(f"📊 Raw Parakeet v3 output type: {type(output)}")
+        logger.info(f"📊 Raw output length: {len(output) if hasattr(output, '__len__') else 'N/A'}")
+        
+        if len(output) > 0:
+            first_result = output[0]
+            logger.info(f"📊 First result type: {type(first_result)}")
+            logger.info(f"📊 First result keys/attributes: {dir(first_result) if hasattr(first_result, '__dict__') else 'No __dict__'}")
+            
+            # Log first result as dict if possible
+            if hasattr(first_result, '__dict__'):
+                logger.info(f"📊 First result __dict__: {first_result.__dict__}")
+            elif hasattr(first_result, 'keys'):
+                logger.info(f"📊 First result keys: {list(first_result.keys())}")
+                logger.info(f"📊 First result content: {dict(first_result)}")
+            else:
+                logger.info(f"📊 First result direct: {first_result}")
+        
+        # 🔧 SAFE KEY ACCESS - Try multiple ways to get text and timestamps
+        first_result = output[0]
+        
+        # Try to get text content
+        text_content = ""
+        try:
+            # Method 1: attribute access (.text)
+            if hasattr(first_result, 'text'):
+                text_content = first_result.text
+                logger.info("✅ Got text via .text attribute")
+            # Method 2: dictionary access (['text'])
+            elif hasattr(first_result, '__getitem__') and 'text' in first_result:
+                text_content = first_result['text']
+                logger.info("✅ Got text via ['text'] key")
+            # Method 3: check other possible text keys
+            elif hasattr(first_result, '__getitem__'):
+                possible_text_keys = ['transcript', 'transcription', 'result', 'output']
+                for key in possible_text_keys:
+                    if key in first_result:
+                        text_content = first_result[key]
+                        logger.info(f"✅ Got text via ['{key}'] key")
+                        break
+            else:
+                logger.warning("❌ Could not find text content in transcription result")
+        except Exception as text_error:
+            logger.error(f"❌ Error extracting text: {text_error}")
+        
+        # Try to get timestamps if requested
+        word_timestamps = []
+        segment_timestamps = []
+        char_timestamps = []
+        
+        if include_timestamps:
+            try:
+                # Method 1: attribute access (.timestamp)
+                if hasattr(first_result, 'timestamp'):
+                    timestamp_data = first_result.timestamp
+                    logger.info("✅ Got timestamps via .timestamp attribute")
+                    if hasattr(timestamp_data, 'get'):
+                        word_timestamps = timestamp_data.get('word', [])
+                        segment_timestamps = timestamp_data.get('segment', [])
+                        char_timestamps = timestamp_data.get('char', [])
+                # Method 2: dictionary access
+                elif hasattr(first_result, '__getitem__') and 'timestamp' in first_result:
+                    timestamp_data = first_result['timestamp']
+                    logger.info("✅ Got timestamps via ['timestamp'] key")
+                    word_timestamps = timestamp_data.get('word', [])
+                    segment_timestamps = timestamp_data.get('segment', [])
+                    char_timestamps = timestamp_data.get('char', [])
+                # Method 3: direct timestamp keys
+                elif hasattr(first_result, '__getitem__'):
+                    word_timestamps = first_result.get('word_timestamps', [])
+                    segment_timestamps = first_result.get('segment_timestamps', [])
+                    char_timestamps = first_result.get('char_timestamps', [])
+                    logger.info("✅ Got timestamps via direct keys")
+                else:
+                    logger.warning("❌ Could not find timestamp data in transcription result")
+            except Exception as timestamp_error:
+                logger.error(f"❌ Error extracting timestamps: {timestamp_error}")
+        
+        result = {
+            'text': text_content,
+            'word_timestamps': word_timestamps,
+            'segment_timestamps': segment_timestamps,
+            'char_timestamps': char_timestamps
+        }
+        
+        logger.info(f"✅ Transcription successful: {len(text_content)} chars, {len(word_timestamps)} words, {len(segment_timestamps)} segments")
         return result
         
     except Exception as e:
-        logger.error(f"Error transcribing audio chunk: {str(e)}")
+        logger.error(f"❌ Error transcribing audio chunk: {str(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return {
             'text': '',
             'word_timestamps': [],
