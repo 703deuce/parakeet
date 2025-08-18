@@ -1450,18 +1450,20 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             logger.info("🔗 Matching timestamps for speaker assignment...")
             
             if diarized_segments and transcription_result.get('text'):
-                # Use word-level timestamps for matching
-                word_timestamps = transcription_result.get('word_timestamps', [])
+                # Use segment-level timestamps for matching (much better than word-level)
+                segment_timestamps = transcription_result.get('segment_timestamps', [])
                 
                 diarized_results = []
                 
-                if word_timestamps:
-                    for word_ts in word_timestamps:
-                        word_start = word_ts['start']
-                        word_end = word_ts['end']
-                        word_text = word_ts['word']
+                if segment_timestamps:
+                    logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
+                    
+                    for segment_ts in segment_timestamps:
+                        segment_start = segment_ts['start']
+                        segment_end = segment_ts['end']
+                        segment_text = segment_ts['text']
                         
-                        # Find which speaker segment this word falls within
+                        # Find which speaker segment this transcription segment overlaps with most
                         assigned_speaker = 'UNKNOWN'
                         max_overlap = 0
                         
@@ -1469,9 +1471,9 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                             spk_start = spk_seg['start']
                             spk_end = spk_seg['end']
                             
-                            # Calculate overlap
-                            overlap_start = max(word_start, spk_start)
-                            overlap_end = min(word_end, spk_end)
+                            # Calculate overlap between transcription segment and speaker segment
+                            overlap_start = max(segment_start, spk_start)
+                            overlap_end = min(segment_end, spk_end)
                             overlap = max(0, overlap_end - overlap_start)
                             
                             if overlap > max_overlap:
@@ -1482,19 +1484,67 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                         if max_overlap > 0.01:  # At least 10ms overlap
                             diarized_results.append({
                                 'speaker': assigned_speaker,
-                                'start_time': word_start,
-                                'end_time': word_end,
-                                'text': word_text,
+                                'start_time': segment_start,
+                                'end_time': segment_end,
+                                'text': segment_text,
                                 'overlap_duration': max_overlap
                             })
                         else:
                             diarized_results.append({
                                 'speaker': 'UNKNOWN',
-                                'start_time': word_start,
-                                'end_time': word_end,
-                                'text': word_text,
+                                'start_time': segment_start,
+                                'end_time': segment_end,
+                                'text': segment_text,
                                 'overlap_duration': 0
                             })
+                            
+                    logger.info(f"✅ Assigned speakers to {len(diarized_results)} segments")
+                
+                else:
+                    logger.warning("⚠️ No segment timestamps found, falling back to word-level matching")
+                    # Fallback to word-level timestamps if segment timestamps are empty
+                    word_timestamps = transcription_result.get('word_timestamps', [])
+                    
+                    if word_timestamps:
+                        for word_ts in word_timestamps:
+                            word_start = word_ts['start']
+                            word_end = word_ts['end']
+                            word_text = word_ts['word']
+                            
+                            # Find which speaker segment this word falls within
+                            assigned_speaker = 'UNKNOWN'
+                            max_overlap = 0
+                            
+                            for spk_seg in diarized_segments:
+                                spk_start = spk_seg['start']
+                                spk_end = spk_seg['end']
+                                
+                                # Calculate overlap
+                                overlap_start = max(word_start, spk_start)
+                                overlap_end = min(word_end, spk_end)
+                                overlap = max(0, overlap_end - overlap_start)
+                                
+                                if overlap > max_overlap:
+                                    max_overlap = overlap
+                                    assigned_speaker = spk_seg['speaker']
+                            
+                            # Only assign speaker if there's meaningful overlap
+                            if max_overlap > 0.01:  # At least 10ms overlap
+                                diarized_results.append({
+                                    'speaker': assigned_speaker,
+                                    'start_time': word_start,
+                                    'end_time': word_end,
+                                    'text': word_text,
+                                    'overlap_duration': max_overlap
+                                })
+                            else:
+                                diarized_results.append({
+                                    'speaker': 'UNKNOWN',
+                                    'start_time': word_start,
+                                    'end_time': word_end,
+                                    'text': word_text,
+                                    'overlap_duration': 0
+                                })
                 
                 # Format diarized output
                 final_result = {
