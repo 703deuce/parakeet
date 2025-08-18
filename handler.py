@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
 import logging
 import uuid
+import time
 from datetime import datetime
 
 # Set up logging
@@ -135,45 +136,96 @@ def configure_segment_timestamps():
         if model:
             logger.info("Configuring Parakeet v3 for segment timestamps with punctuation support...")
             
+            # Debug: Log available model attributes
+            logger.info(f"🔍 Model type: {type(model)}")
+            logger.info(f"🔍 Model has cfg: {hasattr(model, 'cfg')}")
+            if hasattr(model, 'cfg'):
+                logger.info(f"🔍 Model cfg type: {type(model.cfg)}")
+                logger.info(f"🔍 Model cfg has decoding: {hasattr(model.cfg, 'decoding')}")
+            
             # Access the model's decoding config
             if hasattr(model, 'cfg') and hasattr(model.cfg, 'decoding'):
                 decoding_cfg = model.cfg.decoding
+                logger.info(f"🔍 Decoding config type: {type(decoding_cfg)}")
+                logger.info(f"🔍 Available decoding config attributes: {[attr for attr in dir(decoding_cfg) if not attr.startswith('_')]}")
                 
                 # Enable segment separators (punctuation-based segmentation)
                 segment_separators = [".", "?", "!", ";", ":", ","]
-                if hasattr(decoding_cfg, 'segment_seperators'):
-                    decoding_cfg.segment_seperators = segment_separators
-                    logger.info("✅ Set segment separators: ['.', '?', '!', ';', ':', ',']")
-                elif hasattr(decoding_cfg, 'segment_separators'):  # Alternative spelling
-                    decoding_cfg.segment_separators = segment_separators
-                    logger.info("✅ Set segment separators: ['.', '?', '!', ';', ':', ',']")
+                separator_set = False
+                
+                # Try different possible attribute names for segment separators
+                for attr_name in ['segment_seperators', 'segment_separators', 'segment_seps', 'separators']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, segment_separators)
+                        logger.info(f"✅ Set segment separators via '{attr_name}': {segment_separators}")
+                        separator_set = True
+                        break
+                
+                if not separator_set:
+                    logger.warning("⚠️ Could not find segment separator attribute in decoding config")
                 
                 # Ensure punctuation and capitalization are enabled
-                if hasattr(decoding_cfg, 'punctuation'):
-                    decoding_cfg.punctuation = True
-                    logger.info("✅ Enabled punctuation support")
+                punct_enabled = False
+                for attr_name in ['punctuation', 'punct', 'add_punctuation']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, True)
+                        logger.info(f"✅ Enabled punctuation via '{attr_name}'")
+                        punct_enabled = True
+                        break
                 
-                if hasattr(decoding_cfg, 'capitalization'):
-                    decoding_cfg.capitalization = True  
-                    logger.info("✅ Enabled capitalization support")
+                if not punct_enabled:
+                    logger.warning("⚠️ Could not find punctuation attribute in decoding config")
+                
+                cap_enabled = False
+                for attr_name in ['capitalization', 'caps', 'add_capitalization']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, True)  
+                        logger.info(f"✅ Enabled capitalization via '{attr_name}'")
+                        cap_enabled = True
+                        break
+                
+                if not cap_enabled:
+                    logger.warning("⚠️ Could not find capitalization attribute in decoding config")
                     
                 # Set preserve alignments for better timestamp accuracy
-                if hasattr(decoding_cfg, 'preserve_alignments'):
-                    decoding_cfg.preserve_alignments = True
-                    logger.info("✅ Enabled preserve alignments for better timestamps")
-                    
-                logger.info("🎯 Parakeet v3 configured for proper segment timestamp generation")
-                return True
+                align_enabled = False
+                for attr_name in ['preserve_alignments', 'preserve_alignment', 'alignments']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, True)
+                        logger.info(f"✅ Enabled preserve alignments via '{attr_name}'")
+                        align_enabled = True
+                        break
+                
+                if not align_enabled:
+                    logger.warning("⚠️ Could not find preserve alignments attribute in decoding config")
+                
+                # Additional config for timestamps  
+                for attr_name in ['timestamps', 'return_timestamps', 'word_timestamps']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, True)
+                        logger.info(f"✅ Enabled timestamps via '{attr_name}'")
+                        break
+                
+                logger.info("🎯 Parakeet v3 segment timestamp configuration completed")
+                return separator_set or punct_enabled or cap_enabled
                     
             else:
                 logger.warning("⚠️ Could not access model decoding config")
+                # Try alternative configuration methods
+                if hasattr(model, 'decoder') and hasattr(model.decoder, 'cfg'):
+                    logger.info("🔍 Trying decoder.cfg instead...")
+                    decoding_cfg = model.decoder.cfg
+                    # Apply same configuration logic here if needed
+                
                 return False
                 
         else:
             logger.warning("Model not loaded, cannot configure segment timestamps")
             return False
     except Exception as e:
-        logger.warning(f"Failed to configure segment timestamps: {str(e)}")
+        logger.error(f"Failed to configure segment timestamps: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 def configure_streaming_mode(chunk_size_sec=2.0, left_context_sec=10.0, right_context_sec=2.0):
@@ -257,6 +309,43 @@ def load_diarization_model(hf_token=None):
         logger.error("3. Created a valid HuggingFace access token")
         return False
 
+def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
+    """
+    Analyze audio quality and characteristics to help with diarization
+    """
+    try:
+        import librosa
+        import numpy as np
+        
+        # Load audio for analysis
+        y, sr = librosa.load(audio_path, sr=16000)
+        duration = len(y) / sr
+        
+        # Calculate audio statistics
+        rms_energy = np.sqrt(np.mean(y**2))
+        max_amplitude = np.max(np.abs(y))
+        silence_threshold = 0.01
+        non_silent_samples = np.sum(np.abs(y) > silence_threshold)
+        speech_ratio = non_silent_samples / len(y)
+        
+        analysis = {
+            'duration': duration,
+            'sample_rate': sr,
+            'rms_energy': float(rms_energy),
+            'max_amplitude': float(max_amplitude),
+            'speech_ratio': float(speech_ratio),
+            'likely_has_speech': rms_energy > 0.001 and speech_ratio > 0.1,
+            'is_too_quiet': max_amplitude < 0.01,
+            'is_too_short': duration < 2.0
+        }
+        
+        logger.info(f"🔍 Audio Analysis: duration={duration:.1f}s, energy={rms_energy:.4f}, speech_ratio={speech_ratio:.2f}")
+        return analysis
+        
+    except Exception as e:
+        logger.warning(f"Could not analyze audio quality: {e}")
+        return {'duration': 0, 'likely_has_speech': True, 'is_too_quiet': False, 'is_too_short': False}
+
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
     """
     Perform speaker diarization on audio file using pyannote.audio
@@ -265,9 +354,73 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
     try:
         logger.info(f"Performing pyannote.audio speaker diarization on: {audio_path}")
         
-        # Run pyannote diarization
+        # DEBUG: Verify file details
+        if os.path.exists(audio_path):
+            file_size = os.path.getsize(audio_path)
+            logger.info(f"🔍 DIARIZATION DEBUG - File: {audio_path}")
+            logger.info(f"🔍 DIARIZATION DEBUG - Size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
+            
+            # Check actual audio duration with multiple methods
+            try:
+                from pydub import AudioSegment
+                audio = AudioSegment.from_file(audio_path)
+                duration_pydub = len(audio) / 1000.0
+                logger.info(f"🔍 DIARIZATION DEBUG - Duration (pydub): {duration_pydub:.2f}s")
+                
+                import torchaudio
+                waveform, sample_rate = torchaudio.load(audio_path)
+                duration_torch = waveform.shape[1] / sample_rate
+                logger.info(f"🔍 DIARIZATION DEBUG - Duration (torchaudio): {duration_torch:.2f}s")
+                
+                if duration_pydub < 10:
+                    logger.error(f"❌ DIARIZATION ERROR - Audio too short: {duration_pydub}s - this might be the wrong file!")
+                    
+            except Exception as e:
+                logger.error(f"🔍 DIARIZATION DEBUG - Duration check failed: {e}")
+        else:
+            logger.error(f"❌ DIARIZATION ERROR - File does not exist: {audio_path}")
+            return []
+        
+        # First analyze audio quality
+        audio_analysis = analyze_audio_quality(audio_path)
+        
+        # Check if audio is suitable for diarization
+        if not audio_analysis.get('likely_has_speech', True):
+            logger.warning("⚠️ Audio doesn't appear to contain speech - skipping diarization")
+            return []
+            
+        if audio_analysis.get('is_too_quiet', False):
+            logger.warning("⚠️ Audio appears to be too quiet - may affect diarization quality")
+            
+        if audio_analysis.get('is_too_short', False):
+            logger.warning("⚠️ Audio is very short (<2s) - diarization may be unreliable")
+        
+        # Adjust diarization parameters based on audio characteristics
+        pipeline_params = {}
+        
+        # For short audio, use more lenient thresholds
+        if audio_analysis.get('duration', 0) < 10:
+            logger.info("🔧 Using relaxed thresholds for short audio")
+            pipeline_params = {
+                "segmentation": {
+                    "min_duration_off": 0.1,  # Reduced from default 0.5826
+                    "threshold": 0.4,         # Reduced from default 0.4697
+                },
+                "clustering": {
+                    "method": "centroid",
+                    "min_cluster_size": 1,    # Allow single-segment clusters
+                    "threshold": 0.6,         # Reduced from default 0.7153
+                }
+            }
+        
+        # Run pyannote diarization with adjusted parameters
         logger.info("Running pyannote diarization pipeline...")
-        diarization = diarization_model(audio_path)
+        if pipeline_params:
+            # Apply the custom parameters
+            logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
+            diarization = diarization_model(audio_path, **pipeline_params)
+        else:
+            diarization = diarization_model(audio_path)
         
         # Convert pyannote output to our format
         segments = []
@@ -281,6 +434,68 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s)")
         
         logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        else:
+            logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
+            
+            # FALLBACK 1: Try with much more relaxed parameters
+            try:
+                logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
+                fallback_params = {
+                    "segmentation": {
+                        "min_duration_off": 0.05,  # Very short pauses
+                        "threshold": 0.3,          # Very low threshold
+                    },
+                    "clustering": {
+                        "method": "centroid",
+                        "min_cluster_size": 1,
+                        "threshold": 0.4,          # Much lower clustering threshold
+                    }
+                }
+                
+                diarization_fallback = diarization_model(audio_path, **fallback_params)
+                segments = []
+                for turn, _, speaker in diarization_fallback.itertracks(yield_label=True):
+                    segments.append({
+                        'start': turn.start,
+                        'end': turn.end,
+                        'speaker': speaker,
+                        'duration': turn.end - turn.start
+                    })
+                
+                if segments:
+                    logger.info(f"✅ Fallback 1 successful: {len(segments)} segments found")
+                else:
+                    logger.warning("❌ Fallback 1 failed")
+                    
+            except Exception as e:
+                logger.warning(f"Fallback 1 error: {str(e)}")
+            
+            # FALLBACK 2: Create a single speaker segment if still no results
+            if not segments:
+                logger.info("🔄 Fallback 2: Creating single speaker segment for entire audio...")
+                try:
+                    # Get audio duration
+                    import librosa
+                    y, sr = librosa.load(audio_path, sr=None)
+                    duration = len(y) / sr
+                    
+                    segments = [{
+                        'start': 0.0,
+                        'end': duration,
+                        'speaker': 'SPEAKER_00',
+                        'duration': duration
+                    }]
+                    logger.info(f"✅ Fallback 2: Created single speaker segment (0.0s - {duration:.1f}s)")
+                    
+                except Exception as e:
+                    logger.error(f"Fallback 2 error: {str(e)}")
+                    segments = []
+        
+        final_count = len(segments)
+        logger.info(f"🎯 Final diarization result: {final_count} segments")
         if segments:
             speakers_found = set(seg['speaker'] for seg in segments)
             logger.info(f"Speakers detected: {speakers_found}")
@@ -790,6 +1005,12 @@ def download_from_firebase(firebase_url: str) -> str:
     try:
         logger.info(f"🔽 Downloading audio from Firebase: {firebase_url}")
         
+        # DEBUG: Add call stack info to track which flow called this
+        import traceback
+        stack_info = traceback.extract_stack()
+        caller_line = stack_info[-2].lineno if len(stack_info) >= 2 else "unknown"
+        logger.info(f"📍 Download called from line: {caller_line}")
+        
         # Parse URL to get file info
         parsed_url = urlparse(firebase_url)
         
@@ -829,6 +1050,15 @@ def download_from_firebase(firebase_url: str) -> str:
         # Verify file was downloaded
         file_size = os.path.getsize(temp_file.name)
         logger.info(f"✅ Firebase download complete: {temp_file.name} ({file_size} bytes, {file_size/1024/1024:.1f} MB)")
+        
+        # DEBUG: Check audio duration immediately after download
+        try:
+            import librosa
+            y, sr = librosa.load(temp_file.name, sr=None)
+            duration = len(y) / sr
+            logger.info(f"📊 Downloaded audio duration: {duration:.1f}s ({duration/60:.1f} minutes)")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not analyze downloaded audio duration: {str(e)}")
         
         return temp_file.name
         
@@ -1509,11 +1739,52 @@ def handler(job):
                 logger.info("📤 Step 1: Direct upload to Firebase Storage...")
                 firebase_url = upload_to_firebase_storage(audio_bytes, audio_format)
                 
-                # Step 2: Download from Firebase Storage (direct approach)
+                # Step 2: Download from Firebase Storage with retry logic
                 logger.info("📥 Step 2: Direct download from Firebase Storage...")
-                local_audio_file = download_from_firebase(firebase_url)
+                max_download_retries = 10  # Increased for large files
+                download_retry_count = 0
+                local_audio_file = None
+                expected_size = len(audio_bytes)
+                
+                while download_retry_count < max_download_retries and not local_audio_file:
+                    try:
+                        local_audio_file = download_from_firebase(firebase_url)
+                        if local_audio_file:
+                            # Verify the downloaded file is complete
+                            actual_size = os.path.getsize(local_audio_file)
+                            logger.info(f"📊 Downloaded file size: {actual_size} bytes (expected: {expected_size})")
+                            
+                            if actual_size == expected_size:
+                                logger.info(f"✅ Download successful and complete on attempt {download_retry_count + 1}")
+                                break
+                            elif actual_size > 0:
+                                logger.warning(f"⚠️ Partial download: {actual_size}/{expected_size} bytes")
+                                # Delete partial file and retry
+                                try:
+                                    os.unlink(local_audio_file)
+                                except:
+                                    pass
+                                local_audio_file = None
+                            else:
+                                logger.warning(f"⚠️ Empty file downloaded")
+                                local_audio_file = None
+                                
+                    except Exception as e:
+                        download_retry_count += 1
+                        logger.warning(f"❌ Download attempt {download_retry_count} failed: {str(e)}")
+                        
+                        if download_retry_count < max_download_retries:
+                            wait_time = 30  # Simple 30-second wait for large files
+                            logger.info(f"⏳ Waiting {wait_time}s before retry {download_retry_count + 1}/{max_download_retries}...")
+                            logger.info(f"💡 Large files may take 7+ minutes to upload/download completely")
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(f"❌ All {max_download_retries} download attempts failed")
+                
                 if not local_audio_file:
-                    raise Exception("Failed to download audio from Firebase Storage")
+                    raise Exception(f"Failed to download complete audio file from Firebase Storage after {max_download_retries} attempts (up to {max_download_retries * 30 / 60:.1f} minutes)")
+                
+                logger.info(f"🎉 File completely downloaded and verified: {local_audio_file}")
                 
                 # Step 3: Configure streaming mode if requested
                 streaming_config = None

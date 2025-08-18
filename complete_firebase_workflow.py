@@ -120,7 +120,8 @@ def upload_to_firebase(audio_file_path: str) -> tuple[bool, str]:
             }
             
             print("📤 Uploading to Firebase...")
-            response = requests.post(upload_url, files=files, params=params, timeout=60)
+            print("⏳ Large file upload may take several minutes...")
+            response = requests.post(upload_url, files=files, params=params, timeout=300)  # 5 minutes for large files
         
         if response.status_code == 200:
             upload_result = response.json()
@@ -395,10 +396,10 @@ def main():
     """Main function"""
     
     # Check if test audio file exists
-    test_file = "test_clean.wav"
+    test_file = "test2.wav"
     if not os.path.exists(test_file):
         print(f"❌ Test file not found: {test_file}")
-        print("💡 Please ensure test_clean.wav is in the current directory")
+        print("💡 Please ensure test2.wav is in the current directory")
         return
     
     # Check configuration

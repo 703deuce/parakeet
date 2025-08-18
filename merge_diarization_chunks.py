@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+3#!/usr/bin/env python3
 """
 Merge multiple chunked diarization results into one unified transcript
 Stitches all chunks back together with consistent speaker labels and chronological ordering
@@ -6,7 +6,115 @@ Stitches all chunks back together with consistent speaker labels and chronologic
 
 import json
 import os
+import re
 from typing import List, Dict, Any, Tuple
+
+def parse_transcript_to_segments(transcript_file: str) -> List[Dict[str, Any]]:
+    """
+    Parse a transcript file with word-level diarization and convert to segment-level
+    Groups consecutive words from the same speaker into segments
+    """
+    print(f"📖 Parsing transcript file: {transcript_file}")
+    
+    if not os.path.exists(transcript_file):
+        print(f"❌ Transcript file not found: {transcript_file}")
+        return []
+    
+    with open(transcript_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Find the SPEAKER DIARIZATION section
+    diarization_match = re.search(r'SPEAKER DIARIZATION:\s*-+\s*(.*?)(?=\n\n|\nPROCESSING METADATA|$)', content, re.DOTALL)
+    if not diarization_match:
+        print("❌ No SPEAKER DIARIZATION section found in transcript")
+        return []
+    
+    diarization_text = diarization_match.group(1)
+    
+    # Parse each line: [timestamp] SPEAKER_XX: word
+    lines = diarization_text.strip().split('\n')
+    word_entries = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Match pattern: [start_time - end_time] SPEAKER_XX: word
+        match = re.match(r'\[([0-9.]+)s\s*-\s*([0-9.]+)s\]\s+(SPEAKER_\d+):\s*(.+)', line)
+        if match:
+            start_time = float(match.group(1))
+            end_time = float(match.group(2))
+            speaker = match.group(3)
+            word = match.group(4).strip()
+            
+            word_entries.append({
+                'start_time': start_time,
+                'end_time': end_time,
+                'speaker': speaker,
+                'word': word
+            })
+    
+    print(f"  📝 Parsed {len(word_entries)} word entries")
+    
+    if not word_entries:
+        print("❌ No word entries found")
+        return []
+    
+    # Group words into segments based on speaker changes and punctuation
+    segments = []
+    current_segment = None
+    
+    # Punctuation that ends a segment
+    segment_endings = ['.', '!', '?', ':', ';']
+    
+    for entry in word_entries:
+        word = entry['word']
+        speaker = entry['speaker']
+        
+        # Start new segment if speaker changed or this is the first word
+        if current_segment is None or current_segment['speaker'] != speaker:
+            # Save previous segment if exists
+            if current_segment is not None:
+                segments.append(current_segment)
+            
+            # Start new segment
+            current_segment = {
+                'speaker': speaker,
+                'start_time': entry['start_time'],
+                'end_time': entry['end_time'],
+                'words': [word],
+                'text': word
+            }
+        else:
+            # Add word to current segment
+            current_segment['words'].append(word)
+            current_segment['text'] += ' ' + word
+            current_segment['end_time'] = entry['end_time']
+        
+        # Check if word ends with punctuation that should end the segment
+        if any(word.rstrip().endswith(punct) for punct in segment_endings):
+            # End current segment
+            if current_segment is not None:
+                segments.append(current_segment)
+                current_segment = None
+    
+    # Add any remaining segment
+    if current_segment is not None:
+        segments.append(current_segment)
+    
+    # Convert to the format expected by the merge function
+    formatted_segments = []
+    for segment in segments:
+        formatted_segments.append({
+            'speaker': segment['speaker'],
+            'start_time': segment['start_time'],
+            'end_time': segment['end_time'],
+            'text': segment['text'].strip()
+        })
+    
+    print(f"✅ Created {len(formatted_segments)} segments from word-level data")
+    return formatted_segments
 
 def stitch_diarized_chunks(chunk_outputs: List[Dict[str, Any]]) -> Tuple[str, Dict[str, str], List[Dict[str, Any]]]:
     """
