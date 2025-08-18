@@ -1444,7 +1444,7 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             
             # Run transcription on the complete audio file
             logger.info("📝 Running transcription on complete audio file...")
-            transcription_result = transcribe_audio_chunk(audio_file_path, include_timestamps=True)
+            transcription_result = transcribe_audio_file_direct(audio_file_path, include_timestamps=True)
             
             # Match timestamps to assign speakers
             logger.info("🔗 Matching timestamps for speaker assignment...")
