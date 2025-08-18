@@ -104,8 +104,7 @@ def load_model():
                 logger.warning(f"⚠️ Failed to load cached model: {cache_error}")
                 logger.info("🔄 Downloading fresh model...")
                 model = nemo_asr.models.ASRModel.from_pretrained(
-                    model_name="nvidia/parakeet-tdt-0.6b-v3", 
-                    cache_dir=cache_dir
+                    model_name="nvidia/parakeet-tdt-0.6b-v3"
                 )
                 # Save the model to cache for next time
                 try:
@@ -116,8 +115,7 @@ def load_model():
         else:
             logger.info("🔄 Downloading NVIDIA Parakeet TDT 0.6B v3 model (first time)...")
             model = nemo_asr.models.ASRModel.from_pretrained(
-                model_name="nvidia/parakeet-tdt-0.6b-v3",
-                cache_dir=cache_dir
+                model_name="nvidia/parakeet-tdt-0.6b-v3"
             )
             # Save the model to cache for next time
             try:
@@ -333,14 +331,12 @@ def load_diarization_model(hf_token=None):
                 if hf_token:
                     diarization_model = Pipeline.from_pretrained(
                         "pyannote/speaker-diarization-3.1", 
-                        use_auth_token=hf_token,
-                        cache_dir=pyannote_cache_dir
+                        use_auth_token=hf_token
                     )
                 else:
                     # Try without token for cached model
                     diarization_model = Pipeline.from_pretrained(
-                        "pyannote/speaker-diarization-3.1",
-                        cache_dir=pyannote_cache_dir
+                        "pyannote/speaker-diarization-3.1"
                     )
                 logger.info("✅ Cached pyannote model loaded successfully")
             except Exception as cache_error:
@@ -353,8 +349,7 @@ def load_diarization_model(hf_token=None):
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1", 
-                    use_auth_token=hf_token,
-                    cache_dir=pyannote_cache_dir
+                    use_auth_token=hf_token
                 )
         else:
             logger.info("🔄 Downloading pyannote speaker diarization model (first time)...")
@@ -364,15 +359,14 @@ def load_diarization_model(hf_token=None):
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
                 diarization_model = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1", 
-                    use_auth_token=hf_token,
-                    cache_dir=pyannote_cache_dir
+                    use_auth_token=hf_token
                 )
                 logger.info(f"💾 Pyannote model cached to: {pyannote_cache_dir}")
             else:
                 logger.error("HuggingFace token is required for pyannote.audio models")
                 logger.error("Please provide hf_token parameter in your request")
                 logger.error("You can get a token at https://hf.co/settings/tokens")
-                return False
+            return False
             
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
@@ -1589,47 +1583,47 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                     logger.warning("⚠️ No segment timestamps found, falling back to word-level matching")
                     # Fallback to word-level timestamps if segment timestamps are empty
                     word_timestamps = transcription_result.get('word_timestamps', [])
-                    
-                    if word_timestamps:
-                        for word_ts in word_timestamps:
-                            word_start = word_ts['start']
-                            word_end = word_ts['end']
-                            word_text = word_ts['word']
+                
+                if word_timestamps:
+                    for word_ts in word_timestamps:
+                        word_start = word_ts['start']
+                        word_end = word_ts['end']
+                        word_text = word_ts['word']
+                        
+                        # Find which speaker segment this word falls within
+                        assigned_speaker = 'UNKNOWN'
+                        max_overlap = 0
+                        
+                        for spk_seg in diarized_segments:
+                            spk_start = spk_seg['start']
+                            spk_end = spk_seg['end']
                             
-                            # Find which speaker segment this word falls within
-                            assigned_speaker = 'UNKNOWN'
-                            max_overlap = 0
+                            # Calculate overlap
+                            overlap_start = max(word_start, spk_start)
+                            overlap_end = min(word_end, spk_end)
+                            overlap = max(0, overlap_end - overlap_start)
                             
-                            for spk_seg in diarized_segments:
-                                spk_start = spk_seg['start']
-                                spk_end = spk_seg['end']
-                                
-                                # Calculate overlap
-                                overlap_start = max(word_start, spk_start)
-                                overlap_end = min(word_end, spk_end)
-                                overlap = max(0, overlap_end - overlap_start)
-                                
-                                if overlap > max_overlap:
-                                    max_overlap = overlap
-                                    assigned_speaker = spk_seg['speaker']
-                            
-                            # Only assign speaker if there's meaningful overlap
-                            if max_overlap > 0.01:  # At least 10ms overlap
-                                diarized_results.append({
-                                    'speaker': assigned_speaker,
-                                    'start_time': word_start,
-                                    'end_time': word_end,
-                                    'text': word_text,
-                                    'overlap_duration': max_overlap
-                                })
-                            else:
-                                diarized_results.append({
-                                    'speaker': 'UNKNOWN',
-                                    'start_time': word_start,
-                                    'end_time': word_end,
-                                    'text': word_text,
-                                    'overlap_duration': 0
-                                })
+                            if overlap > max_overlap:
+                                max_overlap = overlap
+                                assigned_speaker = spk_seg['speaker']
+                        
+                        # Only assign speaker if there's meaningful overlap
+                        if max_overlap > 0.01:  # At least 10ms overlap
+                            diarized_results.append({
+                                'speaker': assigned_speaker,
+                                'start_time': word_start,
+                                'end_time': word_end,
+                                'text': word_text,
+                                'overlap_duration': max_overlap
+                            })
+                        else:
+                            diarized_results.append({
+                                'speaker': 'UNKNOWN',
+                                'start_time': word_start,
+                                'end_time': word_end,
+                                'text': word_text,
+                                'overlap_duration': 0
+                            })
                 
                 # Format diarized output
                 final_result = {
