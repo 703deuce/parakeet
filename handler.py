@@ -73,7 +73,7 @@ FIREBASE_CONFIG = {
 }
 
 def load_model():
-    """Load the NVIDIA Parakeet model"""
+    """Load the NVIDIA Parakeet model with caching"""
     global model
     try:
         # Clear memory before loading
@@ -82,11 +82,50 @@ def load_model():
         # Check CUDA availability
         ensure_cuda_available()
         
+        # Set up cache directory for persistent storage
+        cache_dir = "/runpod-volume/cache"
+        parakeet_cache_dir = os.path.join(cache_dir, "parakeet-tdt-0.6b-v3")
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(parakeet_cache_dir, exist_ok=True)
+        
         import nemo.collections.asr as nemo_asr
-        logger.info("Loading NVIDIA Parakeet TDT 0.6B v3 model...")
-        model = nemo_asr.models.ASRModel.from_pretrained(
-            model_name="nvidia/parakeet-tdt-0.6b-v3"
-        )
+        
+        # Check if model is already cached
+        cached_model_path = os.path.join(parakeet_cache_dir, "parakeet-tdt-0.6b-v3.nemo")
+        
+        if os.path.exists(cached_model_path):
+            logger.info(f"📦 Loading cached Parakeet model from: {cached_model_path}")
+            try:
+                model = nemo_asr.models.ASRModel.restore_from(cached_model_path)
+                logger.info("✅ Cached model loaded successfully")
+            except Exception as cache_error:
+                logger.warning(f"⚠️ Failed to load cached model: {cache_error}")
+                logger.info("🔄 Downloading fresh model...")
+                model = nemo_asr.models.ASRModel.from_pretrained(
+                    model_name="nvidia/parakeet-tdt-0.6b-v3", 
+                    cache_dir=cache_dir
+                )
+                # Save the model to cache for next time
+                try:
+                    model.save_to(cached_model_path)
+                    logger.info(f"💾 Model cached to: {cached_model_path}")
+                except Exception as save_error:
+                    logger.warning(f"⚠️ Failed to cache model: {save_error}")
+        else:
+            logger.info("🔄 Downloading NVIDIA Parakeet TDT 0.6B v3 model (first time)...")
+            model = nemo_asr.models.ASRModel.from_pretrained(
+                model_name="nvidia/parakeet-tdt-0.6b-v3",
+                cache_dir=cache_dir
+            )
+            # Save the model to cache for next time
+            try:
+                model.save_to(cached_model_path)
+                logger.info(f"💾 Model cached to: {cached_model_path}")
+            except Exception as save_error:
+                logger.warning(f"⚠️ Failed to cache model: {save_error}")
+        
         logger.info("Model loaded successfully")
         
         # Move model to GPU if available
@@ -265,29 +304,75 @@ def configure_streaming_mode(chunk_size_sec=2.0, left_context_sec=10.0, right_co
 
 def load_diarization_model(hf_token=None):
     """
-    Load pyannote.audio diarization pipeline
+    Load pyannote.audio diarization pipeline with caching
     """
     global diarization_model
     try:
         # Clear memory before loading diarization model
         clear_gpu_memory()
         
+        # Set up cache directory for persistent storage
+        cache_dir = "/runpod-volume/cache"
+        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.1")
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(pyannote_cache_dir, exist_ok=True)
+        
         from pyannote.audio import Pipeline
         import torch
-        logger.info("Loading pyannote.audio speaker diarization pipeline...")
         
-        # Try to load with HuggingFace token if provided
-        if hf_token:
-            logger.info("Using provided HuggingFace token for pyannote access")
-            diarization_model = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1", 
-                use_auth_token=hf_token
-            )
+        # Check if model is already cached
+        cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
+        
+        if os.path.exists(cached_config_path):
+            logger.info(f"📦 Loading cached pyannote model from: {pyannote_cache_dir}")
+            try:
+                # Set cache directory for pyannote
+                os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
+                if hf_token:
+                    diarization_model = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1", 
+                        use_auth_token=hf_token,
+                        cache_dir=pyannote_cache_dir
+                    )
+                else:
+                    # Try without token for cached model
+                    diarization_model = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1",
+                        cache_dir=pyannote_cache_dir
+                    )
+                logger.info("✅ Cached pyannote model loaded successfully")
+            except Exception as cache_error:
+                logger.warning(f"⚠️ Failed to load cached pyannote model: {cache_error}")
+                if not hf_token:
+                    logger.error("HuggingFace token is required for pyannote.audio models")
+                    logger.error("Please provide hf_token parameter in your request")
+                    logger.error("You can get a token at https://hf.co/settings/tokens")
+                    return False
+                logger.info("🔄 Downloading fresh pyannote model...")
+                diarization_model = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1", 
+                    use_auth_token=hf_token,
+                    cache_dir=pyannote_cache_dir
+                )
         else:
-            logger.error("HuggingFace token is required for pyannote.audio models")
-            logger.error("Please provide hf_token parameter in your request")
-            logger.error("You can get a token at https://hf.co/settings/tokens")
-            return False
+            logger.info("🔄 Downloading pyannote speaker diarization model (first time)...")
+            # Try to load with HuggingFace token if provided
+            if hf_token:
+                logger.info("Using provided HuggingFace token for pyannote access")
+                os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
+                diarization_model = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1", 
+                    use_auth_token=hf_token,
+                    cache_dir=pyannote_cache_dir
+                )
+                logger.info(f"💾 Pyannote model cached to: {pyannote_cache_dir}")
+            else:
+                logger.error("HuggingFace token is required for pyannote.audio models")
+                logger.error("Please provide hf_token parameter in your request")
+                logger.error("You can get a token at https://hf.co/settings/tokens")
+                return False
             
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
