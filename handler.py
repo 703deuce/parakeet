@@ -324,21 +324,11 @@ def load_diarization_model(hf_token=None):
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
         
         if os.path.exists(cached_config_path):
-            logger.info(f"📦 Loading cached pyannote model from: {pyannote_cache_dir}")
+            logger.info(f"📦 Loading cached pyannote model directly from disk: {pyannote_cache_dir}")
             try:
-                # Set cache directory for pyannote
-                os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
-                if hf_token:
-                    diarization_model = Pipeline.from_pretrained(
-                        "pyannote/speaker-diarization-3.1", 
-                        use_auth_token=hf_token
-                    )
-                else:
-                    # Try without token for cached model
-                    diarization_model = Pipeline.from_pretrained(
-                        "pyannote/speaker-diarization-3.1"
-                    )
-                logger.info("✅ Cached pyannote model loaded successfully")
+                # Load directly from local cache directory - no internet or token needed!
+                diarization_model = Pipeline.from_pretrained(pyannote_cache_dir)
+                logger.info("✅ Cached pyannote model loaded successfully from local files (no token needed)")
             except Exception as cache_error:
                 logger.warning(f"⚠️ Failed to load cached pyannote model: {cache_error}")
                 if not hf_token:
@@ -349,24 +339,30 @@ def load_diarization_model(hf_token=None):
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1", 
-                    use_auth_token=hf_token
+                    use_auth_token=hf_token,
+                    cache_dir=pyannote_cache_dir
                 )
+                logger.info(f"💾 Pyannote model downloaded and cached to: {pyannote_cache_dir}")
         else:
             logger.info("🔄 Downloading pyannote speaker diarization model (first time)...")
             # Try to load with HuggingFace token if provided
             if hf_token:
                 logger.info("Using provided HuggingFace token for pyannote access")
+                # Set environment variables for caching
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
+                os.environ['HF_HOME'] = pyannote_cache_dir
+                
                 diarization_model = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1", 
-                    use_auth_token=hf_token
+                    use_auth_token=hf_token,
+                    cache_dir=pyannote_cache_dir
                 )
-                logger.info(f"💾 Pyannote model cached to: {pyannote_cache_dir}")
+                logger.info(f"💾 Pyannote model downloaded and cached to: {pyannote_cache_dir}")
             else:
                 logger.error("HuggingFace token is required for pyannote.audio models")
                 logger.error("Please provide hf_token parameter in your request")
                 logger.error("You can get a token at https://hf.co/settings/tokens")
-            return False
+                return False
             
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
