@@ -315,8 +315,8 @@ def save_transcript_to_file(result: dict, original_filename: str) -> str:
             for segment in result['diarized_transcript']:
                 speaker = segment.get('speaker', 'Unknown')
                 text = segment.get('text', '')
-                start = segment.get('start', 0)
-                end = segment.get('end', 0)
+                start = segment.get('start_time', 0)
+                end = segment.get('end_time', 0)
                 f.write(f"[{start:.1f}s - {end:.1f}s] {speaker}: {text}\n")
             f.write("\n")
         
