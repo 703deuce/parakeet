@@ -1533,10 +1533,31 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                 if segment_timestamps:
                     logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
                     
+                    # Get the full transcribed text
+                    full_text = transcription_result.get('text', '')
+                    word_timestamps = transcription_result.get('word_timestamps', [])
+                    
                     for segment_ts in segment_timestamps:
                         segment_start = segment_ts['start']
                         segment_end = segment_ts['end']
-                        segment_text = segment_ts['text']
+                        
+                        # Extract text for this segment by finding words within the time range
+                        segment_text = ""
+                        if word_timestamps:
+                            segment_words = []
+                            for word_ts in word_timestamps:
+                                word_start = word_ts['start']
+                                word_end = word_ts['end']
+                                # If word overlaps with segment timeframe
+                                if (word_start >= segment_start and word_start <= segment_end) or \
+                                   (word_end >= segment_start and word_end <= segment_end) or \
+                                   (word_start <= segment_start and word_end >= segment_end):
+                                    segment_words.append(word_ts['word'])
+                            segment_text = ' '.join(segment_words)
+                        
+                        # Fallback: if no words found, use a placeholder
+                        if not segment_text.strip():
+                            segment_text = f"[Segment {segment_start:.1f}-{segment_end:.1f}s]"
                         
                         # Find which speaker segment this transcription segment overlaps with most
                         assigned_speaker = 'UNKNOWN'
