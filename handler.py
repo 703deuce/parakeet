@@ -488,14 +488,34 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 }
             }
         
-        # Run pyannote diarization with adjusted parameters
-        logger.info("Running pyannote diarization pipeline...")
-        if pipeline_params:
-            # Apply the custom parameters
-            logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
-            diarization = diarization_model(audio_path, **pipeline_params)
+        # Ensure audio is mono for diarization
+        mono_audio_path = ensure_mono_audio(audio_path)
+        temp_files_to_cleanup = []
+        
+        if mono_audio_path != audio_path:
+            temp_files_to_cleanup.append(mono_audio_path)
+            logger.info(f"🔄 Using converted mono audio for diarization: {mono_audio_path}")
         else:
-            diarization = diarization_model(audio_path)
+            logger.info("✅ Using original mono audio for diarization")
+        
+        try:
+            # Run pyannote diarization with adjusted parameters
+            logger.info("Running pyannote diarization pipeline...")
+            if pipeline_params:
+                # Apply the custom parameters
+                logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
+                diarization = diarization_model(mono_audio_path, **pipeline_params)
+            else:
+                diarization = diarization_model(mono_audio_path)
+        finally:
+            # Clean up temporary mono file if created
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
         # Convert pyannote output to our format
         segments = []
@@ -791,7 +811,14 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
     Returns list of (file_path, start_time, end_time) tuples
     """
     try:
-        waveform, sample_rate = torchaudio.load(audio_path)
+        # Ensure audio is mono for processing
+        mono_audio_path = ensure_mono_audio(audio_path)
+        temp_files_to_cleanup = []
+        
+        if mono_audio_path != audio_path:
+            temp_files_to_cleanup.append(mono_audio_path)
+        
+        waveform, sample_rate = torchaudio.load(mono_audio_path)
         total_duration = waveform.shape[1] / sample_rate
         
         if total_duration <= chunk_duration:
@@ -819,6 +846,15 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
     except Exception as e:
         logger.error(f"Error in basic splitting: {str(e)}")
         return [(audio_path, 0.0, 0.0)]
+    finally:
+        # Clean up temporary mono file if created
+        for temp_file in temp_files_to_cleanup:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
 def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
     """Transcribe entire audio file directly with Parakeet v3 (NO CHUNKING - processes whole file at once)"""
@@ -851,6 +887,14 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                         logger.warning("⚠️ No audio samples found")
                 else:
                     logger.warning("⚠️ Audio duration is 0ms")
+                
+                # Log channel information for debugging
+                if channels == 1:
+                    logger.info("✅ Audio is mono - compatible with Parakeet model")
+                elif channels == 2:
+                    logger.info("⚠️ Audio is stereo - will be converted to mono for Parakeet model")
+                else:
+                    logger.warning(f"⚠️ Audio has {channels} channels - may cause issues with Parakeet model")
                     
             except Exception as audio_debug_error:
                 logger.warning(f"⚠️ Audio debug failed: {str(audio_debug_error)}")
@@ -863,13 +907,33 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             logger.error("❌ Parakeet model is not loaded!")
             return {"error": "Model not loaded"}
         
+        # Ensure audio is mono before transcription
+        mono_audio_path = ensure_mono_audio(audio_path)
+        temp_files_to_cleanup = []
+        
+        if mono_audio_path != audio_path:
+            temp_files_to_cleanup.append(mono_audio_path)
+            logger.info(f"🔄 Using converted mono audio: {mono_audio_path}")
+        else:
+            logger.info("✅ Using original mono audio")
+        
         logger.info("🚀 Starting Parakeet transcription...")
         
-        if include_timestamps:
-            # Transcribe with timestamps (segment timestamp config done at model load time)
-            output = model.transcribe([audio_path], timestamps=True)
-        else:
-            output = model.transcribe([audio_path])
+        try:
+            if include_timestamps:
+                # Transcribe with timestamps (segment timestamp config done at model load time)
+                output = model.transcribe([mono_audio_path], timestamps=True)
+            else:
+                output = model.transcribe([mono_audio_path])
+        finally:
+            # Clean up temporary mono file if created
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
         logger.info(f"🔍 Raw Parakeet output type: {type(output)}")
         logger.info(f"🔍 Raw Parakeet output length: {len(output) if hasattr(output, '__len__') else 'N/A'}")
@@ -1673,6 +1737,48 @@ def process_downloaded_audio_transcription_only(audio_file_path: str, include_ti
     except Exception as e:
         logger.error(f"❌ Transcription error: {str(e)}")
         return {"error": f"Transcription failed: {str(e)}"}
+
+def ensure_mono_audio(audio_path: str) -> str:
+    """
+    Convert stereo audio to mono if needed
+    Returns path to mono audio file (original if already mono)
+    """
+    try:
+        from pydub import AudioSegment
+        
+        # Load audio and check channels
+        audio = AudioSegment.from_file(audio_path)
+        
+        if audio.channels == 1:
+            logger.info("✅ Audio is already mono - no conversion needed")
+            return audio_path
+        elif audio.channels == 2:
+            logger.info(f"🔄 Converting stereo audio ({audio.channels} channels) to mono...")
+            
+            # Convert to mono
+            mono_audio = audio.set_channels(1)
+            
+            # Create temporary mono file
+            temp_mono_path = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_path)[1])
+            temp_mono_path.close()
+            
+            # Export mono audio
+            mono_audio.export(temp_mono_path.name, format=os.path.splitext(audio_path)[1][1:])
+            
+            logger.info(f"✅ Converted to mono: {temp_mono_path.name}")
+            return temp_mono_path.name
+        else:
+            logger.warning(f"⚠️ Unexpected audio format: {audio.channels} channels - attempting to convert to mono")
+            # Try to convert to mono anyway
+            mono_audio = audio.set_channels(1)
+            temp_mono_path = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_path)[1])
+            temp_mono_path.close()
+            mono_audio.export(temp_mono_path.name, format=os.path.splitext(audio_path)[1][1:])
+            return temp_mono_path.name
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Could not convert audio to mono: {str(e)} - using original file")
+        return audio_path
 
 def handler(job):
     """
