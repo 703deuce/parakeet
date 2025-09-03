@@ -384,6 +384,96 @@ def load_diarization_model(hf_token=None):
         logger.error("3. Created a valid HuggingFace access token")
         return False
 
+def extract_speaker_embedding_from_pyannote(diarization_result, speaker: str, start_time: float, end_time: float, audio_path: str):
+    """
+    Extract speaker embedding from pyannote diarization result.
+    
+    Args:
+        diarization_result: Pyannote diarization output
+        speaker: Speaker ID
+        start_time: Segment start time
+        end_time: Segment end time
+        audio_path: Path to audio file
+        
+    Returns:
+        Speaker embedding vector or None if extraction fails
+    """
+    try:
+        # Method 1: Try to extract from pyannote's internal embedding model
+        if hasattr(diarization_result, 'get_timeline') and hasattr(diarization_result, 'get_labels'):
+            # Access the embedding model from the pipeline
+            if hasattr(diarization_model, 'embedding'):
+                embedding_model = diarization_model.embedding
+                
+                # Load audio segment
+                import torchaudio
+                waveform, sample_rate = torchaudio.load(audio_path)
+                
+                # Extract segment
+                start_sample = int(start_time * sample_rate)
+                end_sample = int(end_time * sample_rate)
+                segment_waveform = waveform[:, start_sample:end_sample]
+                
+                # Get embedding
+                with torch.no_grad():
+                    embedding = embedding_model({'waveform': segment_waveform, 'sample_rate': sample_rate})
+                    if isinstance(embedding, dict) and 'embedding' in embedding:
+                        return embedding['embedding'].cpu().numpy()
+                    elif hasattr(embedding, 'cpu'):
+                        return embedding.cpu().numpy()
+                
+        # Method 2: Use pyannote's speaker verification model directly
+        try:
+            from pyannote.audio import Model
+            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+            
+            # Load a speaker embedding model
+            embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb")
+            
+            # Load and extract audio segment
+            import torchaudio
+            waveform, sample_rate = torchaudio.load(audio_path)
+            start_sample = int(start_time * sample_rate)
+            end_sample = int(end_time * sample_rate)
+            segment_waveform = waveform[:, start_sample:end_sample]
+            
+            # Get embedding
+            with torch.no_grad():
+                embedding = embedding_model({'waveform': segment_waveform, 'sample_rate': sample_rate})
+                if isinstance(embedding, dict) and 'embedding' in embedding:
+                    return embedding['embedding'].cpu().numpy()
+                elif hasattr(embedding, 'cpu'):
+                    return embedding.cpu().numpy()
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Speaker embedding extraction method 2 failed: {e}")
+            
+        # Method 3: Use librosa + simple feature extraction as fallback
+        try:
+            import librosa
+            import numpy as np
+            
+            # Load audio segment
+            y, sr = librosa.load(audio_path, sr=16000, offset=start_time, duration=end_time-start_time)
+            
+            # Extract MFCC features as a simple embedding
+            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+            mfcc_mean = np.mean(mfccs, axis=1)
+            
+            # Normalize
+            mfcc_mean = mfcc_mean / (np.linalg.norm(mfcc_mean) + 1e-8)
+            
+            return mfcc_mean
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Speaker embedding extraction method 3 failed: {e}")
+            
+        return None
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Speaker embedding extraction failed: {e}")
+        return None
+
 def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
     """
     Analyze audio quality and characteristics to help with diarization
@@ -517,16 +607,53 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 except Exception as cleanup_error:
                     logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
-        # Convert pyannote output to our format
+        # Convert pyannote output to our format with speaker embeddings
         segments = []
+        speaker_embeddings = {}  # Store embeddings per speaker
+        
         for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segment_duration = turn.end - turn.start
+            
+            # Skip very short segments (< 1.5 seconds) as they're unreliable
+            if segment_duration < 1.5:
+                logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+                continue
+            
+            # Extract speaker embedding for this segment
+            try:
+                # Get the embedding from pyannote's internal representation
+                if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
+                    # Try to extract embedding from the diarization result
+                    embedding = extract_speaker_embedding_from_pyannote(diarization, speaker, turn.start, turn.end, mono_audio_path)
+                    if embedding is not None:
+                        if speaker not in speaker_embeddings:
+                            speaker_embeddings[speaker] = []
+                        speaker_embeddings[speaker].append(embedding)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
+            
             segments.append({
                 'start': turn.start,
                 'end': turn.end,
                 'speaker': speaker,
-                'duration': turn.end - turn.start
+                'duration': segment_duration
             })
-            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s)")
+            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+        
+        # Average embeddings per speaker for better representation
+        for speaker, embeddings_list in speaker_embeddings.items():
+            if len(embeddings_list) > 1:
+                # Average multiple embeddings for this speaker
+                import numpy as np
+                avg_embedding = np.mean(embeddings_list, axis=0)
+                speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+        
+        # Store embeddings in segments for later use
+        for segment in segments:
+            speaker = segment['speaker']
+            if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                segment['speaker_embedding'] = speaker_embeddings[speaker][0]
         
         logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
         if segments:
@@ -2205,7 +2332,7 @@ def map_speakers_across_chunks(current_chunk_segments: List[Dict], previous_segm
                 similarity = calculate_speaker_similarity(current_speaker_segments, prev_segments)
                 logger.info(f"🔍 Similarity between {current_speaker} and {prev_speaker}: {similarity:.3f}")
                 
-                if similarity > best_similarity and similarity > 0.3:  # Threshold for matching
+                if similarity > best_similarity and similarity > 0.6:  # Lower threshold for embedding-based matching
                     best_similarity = similarity
                     best_match = prev_speaker
             
@@ -2232,7 +2359,7 @@ def map_speakers_across_chunks(current_chunk_segments: List[Dict], previous_segm
 
 def calculate_speaker_similarity(current_segments: List[Dict], previous_segments: List[Dict]) -> float:
     """
-    Calculate similarity between speakers based on text patterns and timing.
+    Calculate similarity between speakers using voice embeddings and timing.
     
     Args:
         current_segments: Segments from current speaker
@@ -2244,6 +2371,34 @@ def calculate_speaker_similarity(current_segments: List[Dict], previous_segments
     try:
         if not current_segments or not previous_segments:
             return 0.0
+        
+        # Method 1: Use voice embeddings if available (preferred)
+        current_embeddings = [seg.get('speaker_embedding') for seg in current_segments if seg.get('speaker_embedding') is not None]
+        previous_embeddings = [seg.get('speaker_embedding') for seg in previous_segments if seg.get('speaker_embedding') is not None]
+        
+        if current_embeddings and previous_embeddings:
+            logger.info("🎤 Using voice embeddings for speaker similarity")
+            
+            # Average embeddings for each speaker
+            import numpy as np
+            current_avg = np.mean(current_embeddings, axis=0)
+            previous_avg = np.mean(previous_embeddings, axis=0)
+            
+            # Calculate cosine similarity
+            dot_product = np.dot(current_avg, previous_avg)
+            norm_current = np.linalg.norm(current_avg)
+            norm_previous = np.linalg.norm(previous_avg)
+            
+            if norm_current > 0 and norm_previous > 0:
+                cosine_similarity = dot_product / (norm_current * norm_previous)
+                # Convert to 0-1 range (cosine similarity is -1 to 1)
+                embedding_similarity = (cosine_similarity + 1) / 2
+                
+                logger.info(f"🔍 Voice embedding similarity: {embedding_similarity:.3f}")
+                return embedding_similarity
+        
+        # Method 2: Fallback to text-based similarity (less reliable)
+        logger.info("📝 Falling back to text-based similarity")
         
         # Extract text from segments
         current_text = " ".join(seg.get("text", "") for seg in current_segments).lower()
@@ -2282,6 +2437,7 @@ def calculate_speaker_similarity(current_segments: List[Dict], previous_segments
         # Combine similarities (weighted average)
         combined_similarity = (0.7 * word_similarity) + (0.3 * duration_similarity)
         
+        logger.info(f"🔍 Text-based similarity: {combined_similarity:.3f}")
         return combined_similarity
         
     except Exception as e:
