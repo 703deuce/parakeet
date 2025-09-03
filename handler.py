@@ -1715,9 +1715,50 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             elif diarization_model is None:
                 return {"error": "Diarization requested but no HF token provided"}
             
-            # Run diarization on the complete audio file
-            logger.info("🎤 Running speaker diarization on complete audio file...")
-            diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+            # Check if we need chunked diarization (pyannote memory limits)
+            if total_duration > 1200:  # 20 minutes - pyannote limit
+                logger.info(f"🎤 Long audio detected ({total_duration/60:.1f} minutes) - using chunked diarization")
+                
+                # Split audio into chunks for diarization
+                chunks = split_audio_into_chunks(audio_file_path, 900, 30)  # 15min chunks, 30s overlap
+                diarized_segments = []
+                
+                for i, chunk in enumerate(chunks):
+                    logger.info(f"🎤 Diarizing chunk {i+1}/{len(chunks)}: {chunk['file_path']}")
+                    
+                    try:
+                        # Run diarization on this chunk
+                        chunk_diarized = perform_speaker_diarization(chunk['file_path'], num_speakers)
+                        
+                        if chunk_diarized:
+                            # Adjust timestamps to global timeline
+                            chunk_offset = chunk['start_time']
+                            for segment in chunk_diarized:
+                                segment['start'] += chunk_offset
+                                segment['end'] += chunk_offset
+                                segment['start_time'] = segment['start']
+                                segment['end_time'] = segment['end']
+                            
+                            diarized_segments.extend(chunk_diarized)
+                            logger.info(f"✅ Chunk {i+1} diarization: {len(chunk_diarized)} segments")
+                        else:
+                            logger.warning(f"⚠️ Chunk {i+1} diarization failed")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Chunk {i+1} diarization error: {e}")
+                        continue
+                        
+                    finally:
+                        # Clean up chunk file
+                        try:
+                            if os.path.exists(chunk['file_path']):
+                                os.unlink(chunk['file_path'])
+                        except Exception as cleanup_error:
+                            logger.warning(f"⚠️ Could not clean up chunk file: {cleanup_error}")
+            else:
+                # Short audio - can run diarization on complete file
+                logger.info("🎤 Running speaker diarization on complete audio file...")
+                diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
             
             # Apply speaker consistency merging
             logger.info(f"🔄 Applying speaker consistency merging (threshold: {speaker_threshold})")
@@ -2750,12 +2791,48 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 "single_speaker_mode": single_speaker_mode
             }
         
-        # Run diarization on the complete audio file
-        logger.info("🎤 Running speaker diarization on complete audio file...")
-        diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+        # Run diarization on each chunk individually (pyannote has memory limits)
+        logger.info("🎤 Running speaker diarization on each chunk individually...")
+        chunk_diarization_results = []
         
-        if not diarized_segments:
-            logger.warning("⚠️ No diarized segments found, returning transcription only")
+        # Split audio into chunks for diarization
+        chunks = split_audio_into_chunks(audio_file_path, 900, 30)  # 15min chunks, 30s overlap
+        
+        for i, chunk in enumerate(chunks):
+            logger.info(f"🎤 Diarizing chunk {i+1}/{len(chunks)}: {chunk['file_path']}")
+            
+            try:
+                # Run diarization on this chunk
+                chunk_diarized = perform_speaker_diarization(chunk['file_path'], num_speakers)
+                
+                if chunk_diarized:
+                    # Adjust timestamps to global timeline
+                    chunk_offset = chunk['start_time']
+                    for segment in chunk_diarized:
+                        segment['start'] += chunk_offset
+                        segment['end'] += chunk_offset
+                        segment['start_time'] = segment['start']
+                        segment['end_time'] = segment['end']
+                    
+                    chunk_diarization_results.extend(chunk_diarized)
+                    logger.info(f"✅ Chunk {i+1} diarization: {len(chunk_diarized)} segments")
+                else:
+                    logger.warning(f"⚠️ Chunk {i+1} diarization failed")
+                    
+            except Exception as e:
+                logger.error(f"❌ Chunk {i+1} diarization error: {e}")
+                continue
+                
+            finally:
+                # Clean up chunk file
+                try:
+                    if os.path.exists(chunk['file_path']):
+                        os.unlink(chunk['file_path'])
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up chunk file: {cleanup_error}")
+        
+        if not chunk_diarization_results:
+            logger.warning("⚠️ No diarized segments found from any chunk, returning transcription only")
             return {
                 **transcription_result,
                 "workflow": "chunked_transcription_fallback",
@@ -2763,10 +2840,10 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 "processing_method": "chunked_diarization_failed"
             }
         
-        # Apply speaker consistency merging
-        logger.info(f"🔄 Applying speaker consistency merging (threshold: {speaker_threshold})")
+        # Apply speaker consistency merging using embeddings from chunked diarization
+        logger.info(f"🔄 Applying speaker consistency merging across chunks (threshold: {speaker_threshold})")
         merged_segments = apply_aggressive_speaker_merging(
-            diarized_segments, 
+            chunk_diarization_results, 
             speaker_threshold=speaker_threshold,
             single_speaker_mode=single_speaker_mode
         )
