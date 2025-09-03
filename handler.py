@@ -1551,7 +1551,8 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
         return {"error": f"Transcription failed: {str(e)}"}
 
 def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use_diarization: bool, 
-                           num_speakers: int = None, hf_token: str = None, audio_format: str = "wav") -> dict:
+                           num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
+                           speaker_threshold: float = 0.35, max_speakers: int = 2, single_speaker_mode: bool = True) -> dict:
     """
     Process downloaded audio file with transcription and optional diarization
     This is the main processing function for Firebase URL workflow
@@ -1574,7 +1575,8 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             logger.info(f"🔪 Long audio detected ({total_duration/60:.1f} minutes) - using chunked processing")
             return process_long_audio_with_chunking(
                 audio_file_path, include_timestamps, use_diarization, 
-                num_speakers, hf_token, audio_format, total_duration
+                num_speakers, hf_token, audio_format, total_duration,
+                speaker_threshold, max_speakers, single_speaker_mode
             )
         
         if use_diarization:
@@ -1589,6 +1591,15 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             # Run diarization on the complete audio file
             logger.info("🎤 Running speaker diarization on complete audio file...")
             diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+            
+            # Apply aggressive speaker merging
+            logger.info(f"🔄 Applying aggressive speaker merging (threshold: {speaker_threshold}, max_speakers: {max_speakers})")
+            diarized_segments = apply_aggressive_speaker_merging(
+                diarized_segments, 
+                speaker_threshold=speaker_threshold,
+                max_speakers=max_speakers,
+                single_speaker_mode=single_speaker_mode
+            )
             
             # Run transcription on the complete audio file
             logger.info("📝 Running transcription on complete audio file...")
@@ -2278,6 +2289,173 @@ def calculate_speaker_similarity(current_segments: List[Dict], previous_segments
         logger.warning(f"⚠️ Failed to calculate speaker similarity: {e}")
         return 0.0
 
+def apply_aggressive_speaker_merging(diarized_segments: List[Dict], speaker_threshold: float = 0.35,
+                                   max_speakers: int = 2, single_speaker_mode: bool = True) -> List[Dict]:
+    """
+    Apply aggressive speaker merging to reduce false speaker detection.
+    
+    Args:
+        diarized_segments: List of diarized segments
+        speaker_threshold: Threshold for merging similar speakers
+        max_speakers: Maximum number of speakers to allow
+        single_speaker_mode: Whether to force single speaker mode
+        
+    Returns:
+        List of merged diarized segments
+    """
+    try:
+        logger.info(f"🔄 Applying aggressive speaker merging...")
+        logger.info(f"📊 Input: {len(diarized_segments)} segments")
+        
+        if not diarized_segments:
+            return []
+        
+        # Group segments by speaker
+        speaker_groups = {}
+        for segment in diarized_segments:
+            speaker = segment.get("speaker", "Unknown")
+            if speaker not in speaker_groups:
+                speaker_groups[speaker] = []
+            speaker_groups[speaker].append(segment)
+        
+        original_speaker_count = len(speaker_groups)
+        logger.info(f"👥 Original speakers: {list(speaker_groups.keys())} ({original_speaker_count} total)")
+        
+        # Single speaker mode - merge everything to Speaker_00
+        if single_speaker_mode:
+            logger.info("👤 Single speaker mode enabled - merging all speakers to Speaker_00")
+            merged_segments = []
+            for segment in diarized_segments:
+                merged_segment = segment.copy()
+                merged_segment["speaker"] = "Speaker_00"
+                merged_segments.append(merged_segment)
+            
+            logger.info(f"✅ Merged {original_speaker_count} speakers into 1 speaker")
+            return merged_segments
+        
+        # Multi-speaker mode with aggressive merging
+        merged_segments = []
+        speaker_mapping = {}
+        final_speaker_counter = 0
+        
+        # Sort speakers by total duration (longest first)
+        speaker_durations = {}
+        for speaker, segments in speaker_groups.items():
+            total_duration = sum(seg.get("end_time", 0) - seg.get("start_time", 0) for seg in segments)
+            speaker_durations[speaker] = total_duration
+        
+        sorted_speakers = sorted(speaker_durations.items(), key=lambda x: x[1], reverse=True)
+        
+        for speaker, duration in sorted_speakers:
+            logger.info(f"🔍 Processing speaker: {speaker} (duration: {duration:.1f}s)")
+            
+            # Check if we should merge with existing speakers
+            should_merge = False
+            merge_target = None
+            
+            if final_speaker_counter < max_speakers:
+                # We still have room for new speakers
+                # Check similarity with existing speakers
+                for existing_speaker, existing_segments in speaker_groups.items():
+                    if existing_speaker in speaker_mapping:
+                        similarity = calculate_speaker_segment_similarity(
+                            speaker_groups[speaker], existing_segments
+                        )
+                        logger.info(f"🔍 Similarity between {speaker} and {existing_speaker}: {similarity:.3f}")
+                        
+                        if similarity > speaker_threshold:
+                            should_merge = True
+                            merge_target = speaker_mapping[existing_speaker]
+                            logger.info(f"👤 Merging {speaker} → {merge_target} (similarity: {similarity:.3f})")
+                            break
+                
+                if not should_merge:
+                    # Create new speaker
+                    new_speaker_id = f"Speaker_{final_speaker_counter:02d}"
+                    speaker_mapping[speaker] = new_speaker_id
+                    final_speaker_counter += 1
+                    logger.info(f"👤 Created new speaker: {speaker} → {new_speaker_id}")
+            else:
+                # Hit max speakers limit - merge with first speaker
+                should_merge = True
+                merge_target = "Speaker_00"
+                logger.info(f"👤 Merging {speaker} → {merge_target} (max speakers reached)")
+            
+            # Apply speaker mapping to segments
+            for segment in speaker_groups[speaker]:
+                merged_segment = segment.copy()
+                if should_merge:
+                    merged_segment["speaker"] = merge_target
+                else:
+                    merged_segment["speaker"] = speaker_mapping[speaker]
+                merged_segments.append(merged_segment)
+        
+        # Sort merged segments by start time
+        merged_segments.sort(key=lambda x: x.get("start_time", 0))
+        
+        final_speaker_count = len(set(seg["speaker"] for seg in merged_segments))
+        logger.info(f"✅ Aggressive merging complete: {original_speaker_count} → {final_speaker_count} speakers")
+        logger.info(f"👥 Final speakers: {sorted(set(seg['speaker'] for seg in merged_segments))}")
+        
+        return merged_segments
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to apply aggressive speaker merging: {e}")
+        return diarized_segments
+
+def calculate_speaker_segment_similarity(segments1: List[Dict], segments2: List[Dict]) -> float:
+    """
+    Calculate similarity between two sets of speaker segments.
+    
+    Args:
+        segments1: First set of segments
+        segments2: Second set of segments
+        
+    Returns:
+        Similarity score between 0 and 1
+    """
+    try:
+        if not segments1 or not segments2:
+            return 0.0
+        
+        # Extract text from segments
+        text1 = " ".join(seg.get("text", "") for seg in segments1).lower()
+        text2 = " ".join(seg.get("text", "") for seg in segments2).lower()
+        
+        if not text1 or not text2:
+            return 0.0
+        
+        # Calculate word overlap similarity
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        # Jaccard similarity
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        word_similarity = len(intersection) / len(union) if union else 0.0
+        
+        # Calculate duration similarity
+        duration1 = sum(seg.get("end_time", 0) - seg.get("start_time", 0) for seg in segments1)
+        duration2 = sum(seg.get("end_time", 0) - seg.get("start_time", 0) for seg in segments2)
+        
+        if duration1 > 0 and duration2 > 0:
+            duration_similarity = 1 - abs(duration1 - duration2) / max(duration1, duration2)
+        else:
+            duration_similarity = 0.0
+        
+        # Combine similarities
+        combined_similarity = (0.7 * word_similarity) + (0.3 * duration_similarity)
+        
+        return combined_similarity
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to calculate speaker similarity: {e}")
+        return 0.0
+
 def transcribe_long_audio(audio_path: str, include_timestamps: bool = True, 
                          chunk_duration: int = 900, overlap_duration: int = 30) -> Dict[str, Any]:
     """
@@ -2364,9 +2542,10 @@ def transcribe_long_audio(audio_path: str, include_timestamps: bool = True,
 
 def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: bool, use_diarization: bool,
                                    num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
-                                   total_duration: float = 0) -> dict:
+                                   total_duration: float = 0, speaker_threshold: float = 0.35, 
+                                   max_speakers: int = 2, single_speaker_mode: bool = True) -> dict:
     """
-    Process long audio files (>15 minutes) using chunking to prevent OOM errors.
+    Process long audio files (>15 minutes) using chunking with aggressive speaker detection.
     
     Args:
         audio_file_path: Path to the audio file
@@ -2376,9 +2555,12 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         hf_token: Hugging Face token for diarization
         audio_format: Audio format
         total_duration: Total duration of the audio file
+        speaker_threshold: Aggressive threshold for speaker merging (default: 0.35)
+        max_speakers: Maximum number of speakers to allow (default: 2)
+        single_speaker_mode: Whether to assume single speaker (default: True)
         
     Returns:
-        Complete transcription result with diarization
+        Complete transcription result with aggressive speaker detection
     """
     try:
         logger.info(f"🔪 Processing long audio with chunking: {total_duration/60:.1f} minutes")
@@ -2404,12 +2586,23 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             return transcription_result
         
         if not use_diarization:
-            # Just return transcription without diarization
+            # Apply aggressive single-speaker mode even without diarization
+            if single_speaker_mode:
+                logger.info("👤 Applying single-speaker mode to transcription...")
+                # Convert all segments to single speaker
+                if transcription_result.get("diarized_transcript"):
+                    for segment in transcription_result["diarized_transcript"]:
+                        segment["speaker"] = "Speaker_00"
+                transcription_result["metadata"]["speaker_count"] = 1
+            
             return {
                 **transcription_result,
                 "workflow": "chunked_transcription_only",
                 "total_duration": total_duration,
-                "processing_method": "chunked_no_diarization"
+                "processing_method": "chunked_no_diarization",
+                "speaker_threshold": speaker_threshold,
+                "max_speakers": max_speakers,
+                "single_speaker_mode": single_speaker_mode
             }
         
         # Run diarization on the complete audio file
@@ -2425,7 +2618,16 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 "processing_method": "chunked_diarization_failed"
             }
         
-        # Match timestamps to assign speakers
+        # Apply aggressive speaker merging
+        logger.info(f"🔄 Applying aggressive speaker merging (threshold: {speaker_threshold}, max_speakers: {max_speakers})")
+        merged_segments = apply_aggressive_speaker_merging(
+            diarized_segments, 
+            speaker_threshold=speaker_threshold,
+            max_speakers=max_speakers,
+            single_speaker_mode=single_speaker_mode
+        )
+        
+        # Match timestamps to assign speakers using merged segments
         logger.info("🔗 Matching timestamps for speaker assignment...")
         
         if transcription_result.get('text'):
@@ -2437,11 +2639,7 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             if segment_timestamps:
                 logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
                 
-                # Get the full transcribed text
-                full_text = transcription_result.get('text', '')
-                word_timestamps = transcription_result.get('word_timestamps', [])
-                
-                # Match each segment timestamp to a speaker
+                # Match each segment timestamp to a speaker from merged segments
                 for segment in segment_timestamps:
                     segment_start = segment.get('start', segment.get('start_time', 0))
                     segment_end = segment.get('end', segment.get('end_time', 0))
@@ -2449,7 +2647,7 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     
                     # Find the best matching speaker for this time segment
                     best_speaker = find_best_speaker_for_time_segment(
-                        diarized_segments, segment_start, segment_end
+                        merged_segments, segment_start, segment_end
                     )
                     
                     if best_speaker:
@@ -2496,14 +2694,18 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     "speaker_count": len(unique_speakers),
                     "word_count": word_count,
                     "diarized_segments": len(diarized_results),
-                    "processing_method": "chunked_with_diarization",
-                    "chunks_processed": transcription_result.get('metadata', {}).get('chunks_processed', 1)
+                    "processing_method": "chunked_with_aggressive_diarization",
+                    "chunks_processed": transcription_result.get('metadata', {}).get('chunks_processed', 1),
+                    "speaker_threshold": speaker_threshold,
+                    "max_speakers": max_speakers,
+                    "single_speaker_mode": single_speaker_mode
                 },
-                "workflow": "chunked_transcription_with_diarization"
+                "workflow": "chunked_transcription_with_aggressive_diarization"
             }
             
-            logger.info(f"🎉 Chunked processing completed successfully!")
+            logger.info(f"🎉 Chunked processing with aggressive speaker detection completed!")
             logger.info(f"📊 Final stats: {word_count} words, {len(unique_speakers)} speakers, {len(diarized_results)} segments")
+            logger.info(f"👥 Speaker settings: threshold={speaker_threshold}, max_speakers={max_speakers}, single_mode={single_speaker_mode}")
             
             return result
             
@@ -2530,6 +2732,9 @@ def handler(job):
             "use_diarization": true,  # Optional: enable speaker diarization
             "num_speakers": null,  # Optional: expected number of speakers
             "hf_token": "hf_xxx",  # Required for diarization
+            "speaker_threshold": 0.35,  # Optional: aggressive speaker merging threshold
+            "max_speakers": 2,  # Optional: maximum number of speakers to allow
+            "single_speaker_mode": true  # Optional: force single speaker mode
         }
     }
     
@@ -2577,6 +2782,11 @@ def handler(job):
                 num_speakers = job_input.get("num_speakers", None)
                 hf_token = job_input.get("hf_token", None)
                 
+                # Aggressive speaker detection settings
+                speaker_threshold = job_input.get("speaker_threshold", 0.35)
+                max_speakers = job_input.get("max_speakers", 2)
+                single_speaker_mode = job_input.get("single_speaker_mode", True)
+                
                 logger.info(f"🌐 URL mode: Processing audio from Firebase URL")
                 logger.info(f"🔗 URL: {audio_url[:50]}...")
                 
@@ -2598,7 +2808,10 @@ def handler(job):
                         use_diarization=use_diarization,
                         num_speakers=num_speakers,
                         hf_token=hf_token,
-                        audio_format=audio_format
+                        audio_format=audio_format,
+                        speaker_threshold=speaker_threshold,
+                        max_speakers=max_speakers,
+                        single_speaker_mode=single_speaker_mode
                     )
                     
                     # Clean up downloaded file
