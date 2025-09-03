@@ -1568,8 +1568,8 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             logger.warning(f"Could not get audio duration: {str(e)}")
             total_duration = 0
         
-        # Check if audio is long enough to benefit from chunking (30+ minutes)
-        use_chunking = total_duration > 1800  # 30 minutes
+        # Check if audio is long enough to benefit from chunking (15+ minutes)
+        use_chunking = total_duration > 900  # 15 minutes
         if use_chunking:
             logger.info(f"🔪 Long audio detected ({total_duration/60:.1f} minutes) - using chunked processing")
             return process_long_audio_with_chunking(
@@ -2366,7 +2366,7 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                                    num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                                    total_duration: float = 0) -> dict:
     """
-    Process long audio files using chunking for better memory management and accuracy.
+    Process long audio files (>15 minutes) using chunking to prevent OOM errors.
     
     Args:
         audio_file_path: Path to the audio file
@@ -2556,8 +2556,9 @@ def handler(job):
     }
     
     DIRECT FIREBASE WORKFLOW:
-    - Files > 10MB: Automatically uploaded to Firebase, processed without chunking
-    - Files < 10MB: Processed directly with chunking (unless firebase_upload=true)
+    - Files > 10MB: Automatically uploaded to Firebase, processed with chunking if > 15 minutes
+    - Files < 10MB: Processed directly with chunking if > 15 minutes (unless firebase_upload=true)
+    - Audio > 15 minutes: Automatically uses chunked processing to prevent OOM errors
     - Firebase upload provides better accuracy and faster processing for all file sizes
     - NO RUNPOD API AUTHENTICATION NEEDED - goes direct to Firebase Storage
     """
