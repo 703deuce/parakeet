@@ -597,25 +597,16 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 diarization = diarization_model(mono_audio_path, **pipeline_params)
             else:
                 diarization = diarization_model(mono_audio_path)
-        finally:
-            # Clean up temporary mono file if created
-            for temp_file in temp_files_to_cleanup:
-                try:
-                    if os.path.exists(temp_file):
-                        os.unlink(temp_file)
-                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-                except Exception as cleanup_error:
-                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
-        
-        # Convert pyannote output to our format with speaker embeddings
-        segments = []
-        speaker_embeddings = {}  # Store embeddings per speaker
+            
+            # Convert pyannote output to our format with speaker embeddings
+            segments = []
+            speaker_embeddings = {}  # Store embeddings per speaker
         
         for turn, _, speaker in diarization.itertracks(yield_label=True):
             segment_duration = turn.end - turn.start
             
-            # Skip very short segments (< 1.5 seconds) as they're unreliable
-            if segment_duration < 1.5:
+            # Skip very short segments (< 0.5 seconds) as they're unreliable
+            if segment_duration < 0.5:
                 logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
                 continue
             
@@ -723,6 +714,16 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             logger.info(f"Speakers detected: {speakers_found}")
         
         return segments
+        
+        finally:
+            # Clean up temporary mono file if created
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
     except Exception as e:
         logger.error(f"Error in pyannote speaker diarization: {str(e)}")
@@ -2930,6 +2931,7 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             return result
             
         else:
+            logger.error(f"❌ No transcription text available. Transcription result: {transcription_result}")
             return {"error": "No transcription text available for speaker assignment"}
             
     except Exception as e:
