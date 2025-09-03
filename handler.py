@@ -1949,17 +1949,17 @@ def find_optimal_split_point(target_sample: int, silence_boundaries: List[int],
 
 def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: int = 30) -> Dict[str, Any]:
     """
-    Merge transcription results from multiple chunks into a single result.
+    Merge transcription results from multiple chunks into a single result with speaker consistency.
     
     Args:
         chunk_results: List of transcription results from each chunk
         overlap_duration: Overlap duration in seconds to handle
         
     Returns:
-        Merged transcription result
+        Merged transcription result with consistent speaker IDs
     """
     try:
-        logger.info(f"🔗 Merging {len(chunk_results)} chunk results...")
+        logger.info(f"🔗 Merging {len(chunk_results)} chunk results with speaker consistency...")
         
         if not chunk_results:
             return {"error": "No chunk results to merge"}
@@ -1976,14 +1976,17 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             "char_timestamps": [],
             "metadata": {
                 "chunks_processed": len(chunk_results),
-                "processing_method": "chunked_transcription"
+                "processing_method": "chunked_transcription_with_speaker_consistency"
             }
         }
         
+        # Speaker consistency mapping
+        global_speaker_map = {}  # Maps chunk speaker IDs to global speaker IDs
+        global_speaker_counter = 0
         current_time_offset = 0
         
         for i, chunk_result in enumerate(chunk_results):
-            logger.info(f"🔗 Processing chunk {i+1}/{len(chunk_results)}")
+            logger.info(f"🔗 Processing chunk {i+1}/{len(chunk_results)} with speaker mapping...")
             
             # Extract chunk data
             chunk_transcript = chunk_result.get("transcript", "")
@@ -1993,9 +1996,27 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             chunk_char_timestamps = chunk_result.get("char_timestamps", [])
             
             if i == 0:
-                # First chunk - use entire content
+                # First chunk - establish global speaker mapping
+                logger.info("🎯 First chunk - establishing global speaker mapping...")
+                
+                # Map all speakers in first chunk to global IDs
+                chunk_speakers = set(seg.get("speaker", "") for seg in chunk_diarized if seg.get("speaker"))
+                for chunk_speaker in sorted(chunk_speakers):
+                    global_speaker_id = f"Speaker_{global_speaker_counter:02d}"
+                    global_speaker_map[chunk_speaker] = global_speaker_id
+                    global_speaker_counter += 1
+                    logger.info(f"👤 Mapped {chunk_speaker} → {global_speaker_id}")
+                
+                # Apply speaker mapping to first chunk
+                mapped_diarized = []
+                for segment in chunk_diarized:
+                    mapped_segment = segment.copy()
+                    if "speaker" in mapped_segment and mapped_segment["speaker"] in global_speaker_map:
+                        mapped_segment["speaker"] = global_speaker_map[mapped_segment["speaker"]]
+                    mapped_diarized.append(mapped_segment)
+                
                 merged_result["transcript"] = chunk_transcript
-                merged_result["diarized_transcript"] = chunk_diarized
+                merged_result["diarized_transcript"] = mapped_diarized
                 merged_result["word_timestamps"] = chunk_word_timestamps
                 merged_result["segment_timestamps"] = chunk_segment_timestamps
                 merged_result["char_timestamps"] = chunk_char_timestamps
@@ -2007,10 +2028,33 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     current_time_offset = 0
                     
             else:
-                # Subsequent chunks - adjust timestamps and merge
+                # Subsequent chunks - map speakers and adjust timestamps
+                logger.info(f"🔗 Mapping speakers for chunk {i+1}...")
                 
-                # Adjust diarized transcript timestamps
+                # Find speakers in current chunk
+                chunk_speakers = set(seg.get("speaker", "") for seg in chunk_diarized if seg.get("speaker"))
+                
+                # Map chunk speakers to global speakers using overlap analysis
+                chunk_speaker_map = map_speakers_across_chunks(
+                    chunk_diarized, merged_result["diarized_transcript"], 
+                    overlap_duration, global_speaker_map, global_speaker_counter
+                )
+                
+                # Update global speaker counter for new speakers
+                for chunk_speaker, global_speaker in chunk_speaker_map.items():
+                    if global_speaker not in global_speaker_map.values():
+                        global_speaker_counter += 1
+                
+                # Apply speaker mapping to current chunk
+                mapped_diarized = []
                 for segment in chunk_diarized:
+                    mapped_segment = segment.copy()
+                    if "speaker" in mapped_segment and mapped_segment["speaker"] in chunk_speaker_map:
+                        mapped_segment["speaker"] = chunk_speaker_map[mapped_segment["speaker"]]
+                    mapped_diarized.append(mapped_segment)
+                
+                # Adjust timestamps and merge
+                for segment in mapped_diarized:
                     adjusted_segment = segment.copy()
                     if "start_time" in adjusted_segment:
                         adjusted_segment["start_time"] += current_time_offset - overlap_duration
@@ -2064,24 +2108,175 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
         # Calculate final statistics
         total_duration = current_time_offset
         word_count = len(merged_result["transcript"].split())
+        unique_speakers = set(seg.get("speaker", "") for seg in merged_result["diarized_transcript"])
         
         merged_result["metadata"].update({
             "total_duration": total_duration,
             "word_count": word_count,
-            "speaker_count": len(set(seg.get("speaker", "") for seg in merged_result["diarized_transcript"])),
+            "speaker_count": len(unique_speakers),
             "total_segments": len(merged_result["diarized_transcript"]),
             "total_words": len(merged_result["word_timestamps"]),
-            "total_characters": len(merged_result["transcript"])
+            "total_characters": len(merged_result["transcript"]),
+            "speaker_consistency": "enabled",
+            "global_speakers": list(unique_speakers)
         })
         
-        logger.info(f"✅ Successfully merged {len(chunk_results)} chunks")
-        logger.info(f"📊 Final result: {word_count} words, {total_duration/60:.1f} minutes")
+        logger.info(f"✅ Successfully merged {len(chunk_results)} chunks with speaker consistency")
+        logger.info(f"📊 Final result: {word_count} words, {total_duration/60:.1f} minutes, {len(unique_speakers)} speakers")
+        logger.info(f"👥 Global speakers: {sorted(unique_speakers)}")
         
         return merged_result
         
     except Exception as e:
         logger.error(f"❌ Failed to merge chunk results: {e}")
         return {"error": f"Failed to merge chunk results: {e}"}
+
+def map_speakers_across_chunks(current_chunk_segments: List[Dict], previous_segments: List[Dict], 
+                              overlap_duration: int, global_speaker_map: Dict[str, str], 
+                              global_speaker_counter: int) -> Dict[str, str]:
+    """
+    Map speakers from current chunk to global speakers using overlap analysis.
+    
+    Args:
+        current_chunk_segments: Diarized segments from current chunk
+        previous_segments: Diarized segments from previous chunks
+        overlap_duration: Overlap duration in seconds
+        global_speaker_map: Existing global speaker mapping
+        global_speaker_counter: Current global speaker counter
+        
+    Returns:
+        Mapping from chunk speaker IDs to global speaker IDs
+    """
+    try:
+        logger.info(f"🔍 Mapping speakers using overlap analysis...")
+        
+        # Find speakers in current chunk
+        current_speakers = set(seg.get("speaker", "") for seg in current_chunk_segments if seg.get("speaker"))
+        chunk_speaker_map = {}
+        
+        # For each speaker in current chunk, try to match with previous speakers
+        for current_speaker in current_speakers:
+            logger.info(f"🔍 Analyzing speaker: {current_speaker}")
+            
+            # Find segments from this speaker in the overlap region (first 30 seconds of current chunk)
+            current_speaker_segments = [
+                seg for seg in current_chunk_segments 
+                if seg.get("speaker") == current_speaker and seg.get("start_time", 0) < overlap_duration
+            ]
+            
+            if not current_speaker_segments:
+                # No overlap segments for this speaker, create new global speaker
+                global_speaker_id = f"Speaker_{global_speaker_counter:02d}"
+                chunk_speaker_map[current_speaker] = global_speaker_id
+                global_speaker_counter += 1
+                logger.info(f"👤 New speaker: {current_speaker} → {global_speaker_id} (no overlap)")
+                continue
+            
+            # Find the best matching speaker from previous chunks
+            best_match = None
+            best_similarity = 0.0
+            
+            # Get recent segments from previous chunks (last 30 seconds)
+            recent_previous_segments = [
+                seg for seg in previous_segments 
+                if seg.get("end_time", 0) > (max(seg.get("end_time", 0) for seg in previous_segments) - overlap_duration)
+            ]
+            
+            # Group previous segments by speaker
+            previous_speakers = {}
+            for seg in recent_previous_segments:
+                speaker = seg.get("speaker", "")
+                if speaker not in previous_speakers:
+                    previous_speakers[speaker] = []
+                previous_speakers[speaker].append(seg)
+            
+            # Compare with each previous speaker
+            for prev_speaker, prev_segments in previous_speakers.items():
+                similarity = calculate_speaker_similarity(current_speaker_segments, prev_segments)
+                logger.info(f"🔍 Similarity between {current_speaker} and {prev_speaker}: {similarity:.3f}")
+                
+                if similarity > best_similarity and similarity > 0.3:  # Threshold for matching
+                    best_similarity = similarity
+                    best_match = prev_speaker
+            
+            if best_match:
+                # Found a match - use existing global speaker ID
+                chunk_speaker_map[current_speaker] = best_match
+                logger.info(f"👤 Matched: {current_speaker} → {best_match} (similarity: {best_similarity:.3f})")
+            else:
+                # No good match found - create new global speaker
+                global_speaker_id = f"Speaker_{global_speaker_counter:02d}"
+                chunk_speaker_map[current_speaker] = global_speaker_id
+                global_speaker_counter += 1
+                logger.info(f"👤 New speaker: {current_speaker} → {global_speaker_id} (no match found)")
+        
+        return chunk_speaker_map
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to map speakers: {e}")
+        # Fallback: create new speakers for all
+        fallback_map = {}
+        for i, speaker in enumerate(current_speakers):
+            fallback_map[speaker] = f"Speaker_{global_speaker_counter + i:02d}"
+        return fallback_map
+
+def calculate_speaker_similarity(current_segments: List[Dict], previous_segments: List[Dict]) -> float:
+    """
+    Calculate similarity between speakers based on text patterns and timing.
+    
+    Args:
+        current_segments: Segments from current speaker
+        previous_segments: Segments from previous speaker
+        
+    Returns:
+        Similarity score between 0 and 1
+    """
+    try:
+        if not current_segments or not previous_segments:
+            return 0.0
+        
+        # Extract text from segments
+        current_text = " ".join(seg.get("text", "") for seg in current_segments).lower()
+        previous_text = " ".join(seg.get("text", "") for seg in previous_segments).lower()
+        
+        if not current_text or not previous_text:
+            return 0.0
+        
+        # Calculate word overlap similarity
+        current_words = set(current_text.split())
+        previous_words = set(previous_text.split())
+        
+        if not current_words or not previous_words:
+            return 0.0
+        
+        # Jaccard similarity
+        intersection = current_words.intersection(previous_words)
+        union = current_words.union(previous_words)
+        
+        word_similarity = len(intersection) / len(union) if union else 0.0
+        
+        # Calculate timing similarity (speakers with similar speech patterns)
+        current_durations = [seg.get("end_time", 0) - seg.get("start_time", 0) for seg in current_segments]
+        previous_durations = [seg.get("end_time", 0) - seg.get("start_time", 0) for seg in previous_segments]
+        
+        if current_durations and previous_durations:
+            avg_current_duration = sum(current_durations) / len(current_durations)
+            avg_previous_duration = sum(previous_durations) / len(previous_durations)
+            
+            # Duration similarity (closer durations = more similar)
+            duration_diff = abs(avg_current_duration - avg_previous_duration)
+            duration_similarity = max(0, 1 - (duration_diff / max(avg_current_duration, avg_previous_duration, 1)))
+        else:
+            duration_similarity = 0.0
+        
+        # Combine similarities (weighted average)
+        combined_similarity = (0.7 * word_similarity) + (0.3 * duration_similarity)
+        
+        return combined_similarity
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to calculate speaker similarity: {e}")
+        return 0.0
 
 def transcribe_long_audio(audio_path: str, include_timestamps: bool = True, 
                          chunk_duration: int = 900, overlap_duration: int = 30) -> Dict[str, Any]:
