@@ -1568,6 +1568,15 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             logger.warning(f"Could not get audio duration: {str(e)}")
             total_duration = 0
         
+        # Check if audio is long enough to benefit from chunking (30+ minutes)
+        use_chunking = total_duration > 1800  # 30 minutes
+        if use_chunking:
+            logger.info(f"🔪 Long audio detected ({total_duration/60:.1f} minutes) - using chunked processing")
+            return process_long_audio_with_chunking(
+                audio_file_path, include_timestamps, use_diarization, 
+                num_speakers, hf_token, audio_format, total_duration
+            )
+        
         if use_diarization:
             # Load diarization model if needed
             if diarization_model is None and hf_token:
@@ -1779,6 +1788,536 @@ def ensure_mono_audio(audio_path: str) -> str:
     except Exception as e:
         logger.warning(f"⚠️ Could not convert audio to mono: {str(e)} - using original file")
         return audio_path
+
+def split_audio_into_chunks(audio_path: str, chunk_duration: int = 900, overlap_duration: int = 30) -> List[Dict[str, Any]]:
+    """
+    Split audio file into chunks for long transcription processing.
+    
+    Args:
+        audio_path: Path to the audio file
+        chunk_duration: Duration of each chunk in seconds (default: 900 = 15 minutes)
+        overlap_duration: Overlap between chunks in seconds (default: 30)
+        
+    Returns:
+        List of chunk information dictionaries
+    """
+    try:
+        import soundfile as sf
+        import numpy as np
+        import librosa
+        
+        logger.info(f"🔪 Splitting audio into {chunk_duration//60}-minute chunks with {overlap_duration}s overlap...")
+        
+        # Load audio file
+        audio_data, sample_rate = sf.read(audio_path, always_2d=True)
+        total_samples = audio_data.shape[0]
+        total_duration = total_samples / sample_rate
+        
+        logger.info(f"📊 Audio info: {total_duration/60:.1f} minutes, {sample_rate}Hz, {audio_data.shape[1]} channels")
+        
+        # Find silence boundaries for better splitting
+        silence_boundaries = find_silence_boundaries(audio_data, sample_rate)
+        
+        chunks = []
+        chunk_index = 0
+        current_start = 0
+        
+        while current_start < total_samples:
+            # Calculate target end point
+            target_end_sample = current_start + int(chunk_duration * sample_rate)
+            
+            if target_end_sample >= total_samples:
+                # Last chunk - use the end of the file
+                actual_end_sample = total_samples
+            else:
+                # Find optimal split point near silence
+                actual_end_sample = find_optimal_split_point(
+                    target_end_sample, silence_boundaries, sample_rate, chunk_duration
+                )
+            
+            # Add overlap for context
+            if actual_end_sample < total_samples:
+                chunk_end_sample = min(actual_end_sample + int(overlap_duration * sample_rate), total_samples)
+            else:
+                chunk_end_sample = actual_end_sample
+            
+            # Extract chunk data
+            chunk_data = audio_data[current_start:chunk_end_sample]
+            
+            # Create temporary chunk file
+            temp_chunk_path = tempfile.NamedTemporaryFile(
+                suffix='.wav', 
+                delete=False,
+                prefix=f'chunk_{chunk_index:03d}_'
+            ).name
+            
+            # Write chunk to file
+            sf.write(temp_chunk_path, chunk_data, sample_rate)
+            
+            # Calculate times
+            start_time = current_start / sample_rate
+            end_time = chunk_end_sample / sample_rate
+            actual_duration = (chunk_end_sample - current_start) / sample_rate
+            
+            chunk_info = {
+                "id": f"chunk_{chunk_index}",
+                "index": chunk_index,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration": actual_duration,
+                "file_path": temp_chunk_path,
+                "start_sample": current_start,
+                "end_sample": chunk_end_sample,
+                "sample_rate": sample_rate,
+                "channels": audio_data.shape[1],
+                "status": "ready"
+            }
+            chunks.append(chunk_info)
+            
+            logger.info(f"✅ Created chunk {chunk_index}: {start_time/60:.1f}min - {end_time/60:.1f}min ({actual_duration/60:.1f}min)")
+            
+            # Move to next chunk start (without overlap)
+            current_start = actual_end_sample
+            chunk_index += 1
+            
+            # Safety check
+            if chunk_index > 100:
+                raise Exception("Too many chunks generated - possible infinite loop")
+        
+        logger.info(f"🎯 Successfully created {len(chunks)} chunks for processing")
+        return chunks
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to split audio into chunks: {e}")
+        raise
+
+def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: int = 25) -> List[int]:
+    """
+    Find silence boundaries in the audio using librosa.
+    """
+    try:
+        # Convert to mono for silence detection
+        if len(audio_data.shape) > 1:
+            mono_audio = np.mean(audio_data, axis=1)
+        else:
+            mono_audio = audio_data
+        
+        # Find non-silent regions
+        non_silent_intervals = librosa.effects.split(mono_audio, top_db=top_db)
+        
+        # Extract silence boundaries
+        silence_boundaries = [0]  # Start of file
+        
+        for i in range(len(non_silent_intervals) - 1):
+            silence_start = non_silent_intervals[i][1]
+            silence_end = non_silent_intervals[i + 1][0]
+            silence_middle = (silence_start + silence_end) // 2
+            silence_boundaries.append(silence_middle)
+        
+        silence_boundaries.append(len(mono_audio))  # End of file
+        
+        logger.info(f"🔍 Found {len(silence_boundaries)} silence boundaries")
+        return sorted(set(silence_boundaries))
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Silence detection failed: {e}, using time-based splitting")
+        return [0, len(audio_data)]
+
+def find_optimal_split_point(target_sample: int, silence_boundaries: List[int], 
+                           sample_rate: int, chunk_duration: int) -> int:
+    """
+    Find the optimal split point near the target sample using silence boundaries.
+    """
+    max_deviation = 60  # Allow ±1 minute deviation
+    max_deviation_samples = max_deviation * sample_rate
+    
+    # Find silence boundaries within acceptable range
+    valid_boundaries = []
+    for boundary in silence_boundaries:
+        if abs(boundary - target_sample) <= max_deviation_samples:
+            valid_boundaries.append(boundary)
+    
+    if valid_boundaries:
+        # Choose the boundary closest to target
+        optimal_point = min(valid_boundaries, key=lambda x: abs(x - target_sample))
+        deviation_sec = abs(optimal_point - target_sample) / sample_rate
+        logger.info(f"🎯 Found silence boundary {deviation_sec:.1f}s from target")
+        return optimal_point
+    else:
+        logger.warning(f"⚠️ No silence boundary within ±{max_deviation}s, using target point")
+        return target_sample
+
+def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: int = 30) -> Dict[str, Any]:
+    """
+    Merge transcription results from multiple chunks into a single result.
+    
+    Args:
+        chunk_results: List of transcription results from each chunk
+        overlap_duration: Overlap duration in seconds to handle
+        
+    Returns:
+        Merged transcription result
+    """
+    try:
+        logger.info(f"🔗 Merging {len(chunk_results)} chunk results...")
+        
+        if not chunk_results:
+            return {"error": "No chunk results to merge"}
+        
+        if len(chunk_results) == 1:
+            return chunk_results[0]
+        
+        # Initialize merged result
+        merged_result = {
+            "transcript": "",
+            "diarized_transcript": [],
+            "word_timestamps": [],
+            "segment_timestamps": [],
+            "char_timestamps": [],
+            "metadata": {
+                "chunks_processed": len(chunk_results),
+                "processing_method": "chunked_transcription"
+            }
+        }
+        
+        current_time_offset = 0
+        
+        for i, chunk_result in enumerate(chunk_results):
+            logger.info(f"🔗 Processing chunk {i+1}/{len(chunk_results)}")
+            
+            # Extract chunk data
+            chunk_transcript = chunk_result.get("transcript", "")
+            chunk_diarized = chunk_result.get("diarized_transcript", [])
+            chunk_word_timestamps = chunk_result.get("word_timestamps", [])
+            chunk_segment_timestamps = chunk_result.get("segment_timestamps", [])
+            chunk_char_timestamps = chunk_result.get("char_timestamps", [])
+            
+            if i == 0:
+                # First chunk - use entire content
+                merged_result["transcript"] = chunk_transcript
+                merged_result["diarized_transcript"] = chunk_diarized
+                merged_result["word_timestamps"] = chunk_word_timestamps
+                merged_result["segment_timestamps"] = chunk_segment_timestamps
+                merged_result["char_timestamps"] = chunk_char_timestamps
+                
+                # Set time offset for next chunk
+                if chunk_segment_timestamps:
+                    current_time_offset = max(ts.get("end", ts.get("end_time", 0)) for ts in chunk_segment_timestamps)
+                else:
+                    current_time_offset = 0
+                    
+            else:
+                # Subsequent chunks - adjust timestamps and merge
+                
+                # Adjust diarized transcript timestamps
+                for segment in chunk_diarized:
+                    adjusted_segment = segment.copy()
+                    if "start_time" in adjusted_segment:
+                        adjusted_segment["start_time"] += current_time_offset - overlap_duration
+                    if "end_time" in adjusted_segment:
+                        adjusted_segment["end_time"] += current_time_offset - overlap_duration
+                    merged_result["diarized_transcript"].append(adjusted_segment)
+                
+                # Adjust word timestamps
+                for word_ts in chunk_word_timestamps:
+                    adjusted_word = word_ts.copy()
+                    if "start" in adjusted_word:
+                        adjusted_word["start"] += current_time_offset - overlap_duration
+                    if "end" in adjusted_word:
+                        adjusted_word["end"] += current_time_offset - overlap_duration
+                    merged_result["word_timestamps"].append(adjusted_word)
+                
+                # Adjust segment timestamps
+                for seg_ts in chunk_segment_timestamps:
+                    adjusted_seg = seg_ts.copy()
+                    if "start" in adjusted_seg:
+                        adjusted_seg["start"] += current_time_offset - overlap_duration
+                    if "end" in adjusted_seg:
+                        adjusted_seg["end"] += current_time_offset - overlap_duration
+                    merged_result["segment_timestamps"].append(adjusted_seg)
+                
+                # Adjust char timestamps
+                for char_ts in chunk_char_timestamps:
+                    adjusted_char = char_ts.copy()
+                    if "start" in adjusted_char:
+                        adjusted_char["start"] += current_time_offset - overlap_duration
+                    if "end" in adjusted_char:
+                        adjusted_char["end"] += current_time_offset - overlap_duration
+                    merged_result["char_timestamps"].append(adjusted_char)
+                
+                # Merge transcript text
+                if merged_result["transcript"] and chunk_transcript:
+                    merged_result["transcript"] += " " + chunk_transcript
+                elif chunk_transcript:
+                    merged_result["transcript"] = chunk_transcript
+                
+                # Update time offset for next chunk
+                if chunk_segment_timestamps:
+                    chunk_end_time = max(ts.get("end", ts.get("end_time", 0)) for ts in chunk_segment_timestamps)
+                    current_time_offset += chunk_end_time - overlap_duration
+                else:
+                    current_time_offset += 900  # Default 15 minutes if no timestamps
+        
+        # Clean up merged result
+        merged_result["transcript"] = merged_result["transcript"].strip()
+        
+        # Calculate final statistics
+        total_duration = current_time_offset
+        word_count = len(merged_result["transcript"].split())
+        
+        merged_result["metadata"].update({
+            "total_duration": total_duration,
+            "word_count": word_count,
+            "speaker_count": len(set(seg.get("speaker", "") for seg in merged_result["diarized_transcript"])),
+            "total_segments": len(merged_result["diarized_transcript"]),
+            "total_words": len(merged_result["word_timestamps"]),
+            "total_characters": len(merged_result["transcript"])
+        })
+        
+        logger.info(f"✅ Successfully merged {len(chunk_results)} chunks")
+        logger.info(f"📊 Final result: {word_count} words, {total_duration/60:.1f} minutes")
+        
+        return merged_result
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to merge chunk results: {e}")
+        return {"error": f"Failed to merge chunk results: {e}"}
+
+def transcribe_long_audio(audio_path: str, include_timestamps: bool = True, 
+                         chunk_duration: int = 900, overlap_duration: int = 30) -> Dict[str, Any]:
+    """
+    Transcribe long audio files by splitting into chunks and merging results.
+    
+    Args:
+        audio_path: Path to the audio file
+        include_timestamps: Whether to include timestamps
+        chunk_duration: Duration of each chunk in seconds (default: 900 = 15 minutes)
+        overlap_duration: Overlap between chunks in seconds (default: 30)
+        
+    Returns:
+        Complete transcription result
+    """
+    try:
+        logger.info(f"🎯 Starting long audio transcription: {audio_path}")
+        
+        # Ensure audio is mono
+        mono_audio_path = ensure_mono_audio(audio_path)
+        temp_files_to_cleanup = []
+        
+        if mono_audio_path != audio_path:
+            temp_files_to_cleanup.append(mono_audio_path)
+        
+        try:
+            # Split audio into chunks
+            chunks = split_audio_into_chunks(mono_audio_path, chunk_duration, overlap_duration)
+            
+            if len(chunks) == 1:
+                # Single chunk - process directly
+                logger.info("📝 Single chunk detected - processing directly")
+                result = transcribe_audio_file_direct(mono_audio_path, include_timestamps)
+                return result
+            
+            # Process each chunk
+            chunk_results = []
+            for i, chunk in enumerate(chunks):
+                logger.info(f"🎤 Transcribing chunk {i+1}/{len(chunks)}: {chunk['file_path']}")
+                
+                try:
+                    # Transcribe chunk
+                    chunk_result = transcribe_audio_file_direct(chunk['file_path'], include_timestamps)
+                    
+                    if chunk_result.get("error"):
+                        logger.error(f"❌ Chunk {i+1} failed: {chunk_result['error']}")
+                        continue
+                    
+                    chunk_results.append(chunk_result)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to transcribe chunk {i+1}: {e}")
+                    continue
+                
+                finally:
+                    # Clean up chunk file
+                    try:
+                        if os.path.exists(chunk['file_path']):
+                            os.unlink(chunk['file_path'])
+                    except Exception as cleanup_error:
+                        logger.warning(f"⚠️ Could not clean up chunk file: {cleanup_error}")
+            
+            if not chunk_results:
+                return {"error": "All chunks failed to transcribe"}
+            
+            # Merge results
+            logger.info(f"🔗 Merging {len(chunk_results)} successful chunks...")
+            merged_result = merge_chunk_results(chunk_results, overlap_duration)
+            
+            return merged_result
+            
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
+        
+    except Exception as e:
+        logger.error(f"❌ Long audio transcription failed: {e}")
+        return {"error": f"Long audio transcription failed: {e}"}
+
+def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: bool, use_diarization: bool,
+                                   num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
+                                   total_duration: float = 0) -> dict:
+    """
+    Process long audio files using chunking for better memory management and accuracy.
+    
+    Args:
+        audio_file_path: Path to the audio file
+        include_timestamps: Whether to include timestamps
+        use_diarization: Whether to use speaker diarization
+        num_speakers: Expected number of speakers
+        hf_token: Hugging Face token for diarization
+        audio_format: Audio format
+        total_duration: Total duration of the audio file
+        
+    Returns:
+        Complete transcription result with diarization
+    """
+    try:
+        logger.info(f"🔪 Processing long audio with chunking: {total_duration/60:.1f} minutes")
+        
+        # Load diarization model if needed
+        if use_diarization and diarization_model is None and hf_token:
+            logger.info("🎤 Loading pyannote diarization model for chunked processing...")
+            if not load_diarization_model(hf_token):
+                return {"error": "Failed to load diarization model with provided HF token"}
+        elif use_diarization and diarization_model is None:
+            return {"error": "Diarization requested but no HF token provided"}
+        
+        # Use the transcribe_long_audio function for chunked transcription
+        logger.info("🎤 Starting chunked transcription...")
+        transcription_result = transcribe_long_audio(
+            audio_file_path, 
+            include_timestamps=include_timestamps,
+            chunk_duration=900,  # 15 minutes
+            overlap_duration=30  # 30 seconds overlap
+        )
+        
+        if transcription_result.get("error"):
+            return transcription_result
+        
+        if not use_diarization:
+            # Just return transcription without diarization
+            return {
+                **transcription_result,
+                "workflow": "chunked_transcription_only",
+                "total_duration": total_duration,
+                "processing_method": "chunked_no_diarization"
+            }
+        
+        # Run diarization on the complete audio file
+        logger.info("🎤 Running speaker diarization on complete audio file...")
+        diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+        
+        if not diarized_segments:
+            logger.warning("⚠️ No diarized segments found, returning transcription only")
+            return {
+                **transcription_result,
+                "workflow": "chunked_transcription_fallback",
+                "total_duration": total_duration,
+                "processing_method": "chunked_diarization_failed"
+            }
+        
+        # Match timestamps to assign speakers
+        logger.info("🔗 Matching timestamps for speaker assignment...")
+        
+        if transcription_result.get('text'):
+            # Use segment-level timestamps for matching
+            segment_timestamps = transcription_result.get('segment_timestamps', [])
+            
+            diarized_results = []
+            
+            if segment_timestamps:
+                logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
+                
+                # Get the full transcribed text
+                full_text = transcription_result.get('text', '')
+                word_timestamps = transcription_result.get('word_timestamps', [])
+                
+                # Match each segment timestamp to a speaker
+                for segment in segment_timestamps:
+                    segment_start = segment.get('start', segment.get('start_time', 0))
+                    segment_end = segment.get('end', segment.get('end_time', 0))
+                    segment_text = segment.get('text', '')
+                    
+                    # Find the best matching speaker for this time segment
+                    best_speaker = find_best_speaker_for_time_segment(
+                        diarized_segments, segment_start, segment_end
+                    )
+                    
+                    if best_speaker:
+                        diarized_results.append({
+                            "speaker": best_speaker,
+                            "start_time": segment_start,
+                            "end_time": segment_end,
+                            "text": segment_text
+                        })
+                    else:
+                        # Fallback to first speaker if no match found
+                        diarized_results.append({
+                            "speaker": "Speaker_00",
+                            "start_time": segment_start,
+                            "end_time": segment_end,
+                            "text": segment_text
+                        })
+                
+                logger.info(f"✅ Successfully assigned speakers to {len(diarized_results)} segments")
+                
+            else:
+                # Fallback: assign entire transcript to first speaker
+                logger.warning("⚠️ No segment timestamps available, assigning entire transcript to first speaker")
+                diarized_results = [{
+                    "speaker": "Speaker_00",
+                    "start_time": 0,
+                    "end_time": total_duration,
+                    "text": transcription_result.get('text', '')
+                }]
+            
+            # Calculate statistics
+            unique_speakers = set(seg["speaker"] for seg in diarized_results)
+            word_count = len(transcription_result.get('text', '').split())
+            
+            result = {
+                "transcript": transcription_result.get('text', ''),
+                "diarized_transcript": diarized_results,
+                "word_timestamps": transcription_result.get('word_timestamps', []),
+                "segment_timestamps": transcription_result.get('segment_timestamps', []),
+                "char_timestamps": transcription_result.get('char_timestamps', []),
+                "metadata": {
+                    **transcription_result.get('metadata', {}),
+                    "total_duration": total_duration,
+                    "speaker_count": len(unique_speakers),
+                    "word_count": word_count,
+                    "diarized_segments": len(diarized_results),
+                    "processing_method": "chunked_with_diarization",
+                    "chunks_processed": transcription_result.get('metadata', {}).get('chunks_processed', 1)
+                },
+                "workflow": "chunked_transcription_with_diarization"
+            }
+            
+            logger.info(f"🎉 Chunked processing completed successfully!")
+            logger.info(f"📊 Final stats: {word_count} words, {len(unique_speakers)} speakers, {len(diarized_results)} segments")
+            
+            return result
+            
+        else:
+            return {"error": "No transcription text available for speaker assignment"}
+            
+    except Exception as e:
+        logger.error(f"❌ Chunked processing failed: {str(e)}")
+        return {"error": f"Chunked processing failed: {str(e)}"}
 
 def handler(job):
     """
