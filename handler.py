@@ -236,15 +236,38 @@ def configure_segment_timestamps():
                 if not align_enabled:
                     logger.warning("⚠️ Could not find preserve alignments attribute in decoding config")
                 
-                # Additional config for timestamps  
-                for attr_name in ['timestamps', 'return_timestamps', 'word_timestamps']:
-                    if hasattr(decoding_cfg, attr_name):
-                        setattr(decoding_cfg, attr_name, True)
-                        logger.info(f"✅ Enabled timestamps via '{attr_name}'")
-                        break
-                
-                logger.info("🎯 Parakeet v3 segment timestamp configuration completed")
-                return separator_set or punct_enabled or cap_enabled
+                # Additional config for timestamps using official NeMo API
+                try:
+                    from omegaconf import open_dict
+                    with open_dict(decoding_cfg):
+                        # Official NeMo configuration for segment timestamps (exactly as per NVIDIA docs)
+                        # Docs: decoding_cfg.preserve_alignments = True
+                        # Docs: decoding_cfg.compute_timestamps = True
+                        # Docs: decoding_cfg.segment_seperators = [".", "?", "!", ";"]
+                        decoding_cfg.preserve_alignments = True
+                        decoding_cfg.compute_timestamps = True
+                        if hasattr(decoding_cfg, 'segment_seperators'):
+                            decoding_cfg.segment_seperators = [".", "?", "!", ";", ":", ","]
+                        elif hasattr(decoding_cfg, 'segment_separators'):
+                            decoding_cfg.segment_separators = [".", "?", "!", ";", ":", ","]
+                    
+                    # Apply the configuration changes (exactly as per NVIDIA docs)
+                    # Docs: asr_model.change_decoding_strategy(decoding_cfg)
+                    model.change_decoding_strategy(decoding_cfg)
+                    logger.info("✅ Applied official NeMo segment timestamp configuration")
+                    logger.info("🎯 Parakeet v3 segment timestamp configuration completed")
+                    return True
+                except Exception as config_error:
+                    logger.warning(f"⚠️ Failed to apply official NeMo config: {config_error}")
+                    # Fallback to manual attribute setting
+                    for attr_name in ['timestamps', 'return_timestamps', 'word_timestamps']:
+                        if hasattr(decoding_cfg, attr_name):
+                            setattr(decoding_cfg, attr_name, True)
+                            logger.info(f"✅ Enabled timestamps via '{attr_name}'")
+                            break
+                    
+                    logger.info("🎯 Parakeet v3 segment timestamp configuration completed (fallback)")
+                    return separator_set or punct_enabled or cap_enabled
                     
             else:
                 logger.warning("⚠️ Could not access model decoding config")
@@ -430,6 +453,16 @@ def extract_speaker_embedding_from_pyannote(diarization_result, speaker: str, st
             # Load a speaker embedding model
             embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb")
             
+            # Ensure it's actually a model object, not a string
+            if isinstance(embedding_model, str):
+                logger.warning("⚠️ Embedding model is a string, trying Model.from_pretrained instead")
+                embedding_model = Model.from_pretrained("speechbrain/spkrec-ecapa-voxceleb")
+            
+            # Check if the model is callable
+            if not callable(embedding_model):
+                logger.warning("⚠️ Embedding model is not callable, skipping method 2")
+                raise Exception("Embedding model is not callable")
+            
             # Load and extract audio segment
             import torchaudio
             waveform, sample_rate = torchaudio.load(audio_path)
@@ -588,7 +621,6 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         else:
             logger.info("✅ Using original mono audio for diarization")
         
-        try:
             # Run pyannote diarization with adjusted parameters
             logger.info("Running pyannote diarization pipeline...")
             if pipeline_params:
@@ -645,68 +677,68 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 speaker = segment['speaker']
                 if speaker in speaker_embeddings and speaker_embeddings[speaker]:
                     segment['speaker_embedding'] = speaker_embeddings[speaker][0]
+        
+        logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        else:
+            logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
             
-            logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
-            if segments:
-                speakers_found = set(seg['speaker'] for seg in segments)
-                logger.info(f"Speakers detected: {speakers_found}")
-            else:
-                logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
-                
-                # FALLBACK 1: Try with much more relaxed parameters
-                try:
-                    logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
-                    fallback_params = {
-                        "segmentation": {
-                            "min_duration_off": 0.05,  # Very short pauses
-                            "threshold": 0.3,          # Very low threshold
-                        },
-                        "clustering": {
-                            "method": "centroid",
-                            "min_cluster_size": 1,
-                            "threshold": 0.4,          # Much lower clustering threshold
-                        }
+            # FALLBACK 1: Try with much more relaxed parameters
+            try:
+                logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
+                fallback_params = {
+                    "segmentation": {
+                        "min_duration_off": 0.05,  # Very short pauses
+                        "threshold": 0.3,          # Very low threshold
+                    },
+                    "clustering": {
+                        "method": "centroid",
+                        "min_cluster_size": 1,
+                        "threshold": 0.4,          # Much lower clustering threshold
                     }
-                    
-                    diarization_fallback = diarization_model(audio_path, **fallback_params)
-                    segments = []
-                    for turn, _, speaker in diarization_fallback.itertracks(yield_label=True):
-                        segments.append({
-                            'start': turn.start,
-                            'end': turn.end,
-                            'speaker': speaker,
-                            'duration': turn.end - turn.start
-                        })
-                    
-                    if segments:
-                        logger.info(f"✅ Fallback 1 successful: {len(segments)} segments found")
-                    else:
-                        logger.warning("❌ Fallback 1 failed")
-                        
-                except Exception as e:
-                    logger.warning(f"Fallback 1 error: {str(e)}")
+                }
                 
-                # FALLBACK 2: Create a single speaker segment if still no results
-                if not segments:
-                    logger.info("🔄 Fallback 2: Creating single speaker segment for entire audio...")
-                    try:
-                        # Get audio duration
-                        import librosa
-                        y, sr = librosa.load(audio_path, sr=None)
-                        duration = len(y) / sr
-                        
-                        segments = [{
-                            'start': 0.0,
-                            'end': duration,
-                            'speaker': 'SPEAKER_00',
-                            'duration': duration
-                        }]
-                        logger.info(f"✅ Fallback 2: Created single speaker segment (0.0s - {duration:.1f}s)")
-                        
-                    except Exception as e:
-                        logger.error(f"Fallback 2 error: {str(e)}")
-                        segments = []
+                diarization_fallback = diarization_model(audio_path, **fallback_params)
+                segments = []
+                for turn, _, speaker in diarization_fallback.itertracks(yield_label=True):
+                    segments.append({
+                        'start': turn.start,
+                        'end': turn.end,
+                        'speaker': speaker,
+                        'duration': turn.end - turn.start
+                    })
+                
+                if segments:
+                    logger.info(f"✅ Fallback 1 successful: {len(segments)} segments found")
+                else:
+                    logger.warning("❌ Fallback 1 failed")
+                    
+            except Exception as e:
+                logger.warning(f"Fallback 1 error: {str(e)}")
             
+            # FALLBACK 2: Create a single speaker segment if still no results
+            if not segments:
+                logger.info("🔄 Fallback 2: Creating single speaker segment for entire audio...")
+                try:
+                    # Get audio duration
+                    import librosa
+                    y, sr = librosa.load(audio_path, sr=None)
+                    duration = len(y) / sr
+                    
+                    segments = [{
+                        'start': 0.0,
+                        'end': duration,
+                        'speaker': 'SPEAKER_00',
+                        'duration': duration
+                    }]
+                    logger.info(f"✅ Fallback 2: Created single speaker segment (0.0s - {duration:.1f}s)")
+                    
+                except Exception as e:
+                    logger.error(f"Fallback 2 error: {str(e)}")
+                    segments = []
+        
             final_count = len(segments)
             logger.info(f"🎯 Final diarization result: {final_count} segments")
             if segments:
@@ -715,27 +747,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             
             return segments
             
-        except Exception as e:
-            logger.error(f"Error in pyannote speaker diarization: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return []
-        
-        finally:
-            # Clean up temporary mono file if created
-            for temp_file in temp_files_to_cleanup:
-                try:
-                    if os.path.exists(temp_file):
-                        os.unlink(temp_file)
-                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-                except Exception as cleanup_error:
-                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
-        
     except Exception as e:
         logger.error(f"Error in pyannote speaker diarization: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
+    
+    finally:
+        # Clean up temporary mono file if created
+        for temp_file in temp_files_to_cleanup:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
     """Extract audio segment from start to end time"""
@@ -1055,7 +1081,8 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         
         try:
             if include_timestamps:
-                # Transcribe with timestamps (segment timestamp config done at model load time)
+                # Transcribe with timestamps=True (official NeMo API - exactly as per NVIDIA docs)
+                # Docs: output = asr_model.transcribe(['audio.wav'], timestamps=True)
                 output = model.transcribe([mono_audio_path], timestamps=True)
             else:
                 output = model.transcribe([mono_audio_path])
@@ -1093,6 +1120,12 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         # 🔧 SAFE KEY ACCESS - Try multiple ways to get text and timestamps
         first_result = output[0]
         
+        # DEBUG: Log the actual model output structure
+        logger.info(f"🔍 Model raw output type: {type(output)}")
+        logger.info(f"🔍 First result type: {type(first_result)}")
+        logger.info(f"🔍 First result dir: {dir(first_result) if hasattr(first_result, '__dict__') else 'No __dict__'}")
+        logger.info(f"🔍 First result: {first_result}")
+        
         # Try to get text content
         text_content = ""
         try:
@@ -1124,31 +1157,119 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         
         if include_timestamps:
             try:
-                # Method 1: attribute access (.timestamp)
+                # Official NeMo API: access via .timestamp attribute (exactly as per NVIDIA docs)
+                # Docs: word_timestamps = output.timestamp['word']
+                # Docs: segment_timestamps = output.timestamp['segment'] 
+                # Docs: char_timestamps = output.timestamp['char']
                 if hasattr(first_result, 'timestamp'):
                     timestamp_data = first_result.timestamp
-                    logger.info("✅ Got timestamps via .timestamp attribute")
-                    if hasattr(timestamp_data, 'get'):
-                        word_timestamps = timestamp_data.get('word', [])
-                        segment_timestamps = timestamp_data.get('segment', [])
-                        char_timestamps = timestamp_data.get('char', [])
-                # Method 2: dictionary access
-                elif hasattr(first_result, '__getitem__') and 'timestamp' in first_result:
-                    timestamp_data = first_result['timestamp']
-                    logger.info("✅ Got timestamps via ['timestamp'] key")
+                    logger.info("✅ Got timestamps via .timestamp attribute (NeMo API)")
+                    logger.info(f"🔍 Timestamp data type: {type(timestamp_data)}")
+                    logger.info(f"🔍 Timestamp data keys: {list(timestamp_data.keys()) if hasattr(timestamp_data, 'keys') else 'No keys'}")
+                    
+                    # Extract using official NeMo structure (exactly as per NVIDIA docs)
                     word_timestamps = timestamp_data.get('word', [])
                     segment_timestamps = timestamp_data.get('segment', [])
                     char_timestamps = timestamp_data.get('char', [])
-                # Method 3: direct timestamp keys
-                elif hasattr(first_result, '__getitem__'):
-                    word_timestamps = first_result.get('word_timestamps', [])
-                    segment_timestamps = first_result.get('segment_timestamps', [])
-                    char_timestamps = first_result.get('char_timestamps', [])
-                    logger.info("✅ Got timestamps via direct keys")
+                    
+                    logger.info(f"🔍 NeMo API extracted - words: {len(word_timestamps)}, segments: {len(segment_timestamps)}, chars: {len(char_timestamps)}")
+                    
+                    # Log sample segment timestamp structure
+                    if segment_timestamps:
+                        logger.info(f"🔍 Sample segment: {segment_timestamps[0]}")
+                    if word_timestamps:
+                        logger.info(f"🔍 Sample word: {word_timestamps[0]}")
+                        
                 else:
-                    logger.warning("❌ Could not find timestamp data in transcription result")
+                    logger.warning("❌ No .timestamp attribute found - checking alternative access methods")
+                    # Fallback methods for different model versions
+                    if hasattr(first_result, '__getitem__') and 'timestamp' in first_result:
+                        timestamp_data = first_result['timestamp']
+                        logger.info("✅ Got timestamps via ['timestamp'] key")
+                        word_timestamps = timestamp_data.get('word', [])
+                        segment_timestamps = timestamp_data.get('segment', [])
+                        char_timestamps = timestamp_data.get('char', [])
+                    elif hasattr(first_result, '__getitem__'):
+                        word_timestamps = first_result.get('word_timestamps', [])
+                        segment_timestamps = first_result.get('segment_timestamps', [])
+                        char_timestamps = first_result.get('char_timestamps', [])
+                        logger.info("✅ Got timestamps via direct keys")
+                    else:
+                        logger.warning("❌ Could not find timestamp data in transcription result")
+                        
             except Exception as timestamp_error:
                 logger.error(f"❌ Error extracting timestamps: {timestamp_error}")
+        
+        # If text_content is empty but we have word_timestamps, assemble text from words
+        if not text_content and word_timestamps:
+            logger.info("🔄 Main text is empty, assembling from word timestamps...")
+            try:
+                # Extract words from word_timestamps and join them
+                words = []
+                for word_ts in word_timestamps:
+                    if isinstance(word_ts, dict) and 'word' in word_ts:
+                        words.append(word_ts['word'])
+                    elif isinstance(word_ts, str):
+                        words.append(word_ts)
+                
+                text_content = ' '.join(words)
+                logger.info(f"✅ Assembled text from {len(words)} words: {len(text_content)} characters")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to assemble text from word timestamps: {e}")
+        
+        # If we have word_timestamps but no segment_timestamps, create segments from words
+        if word_timestamps and not segment_timestamps:
+            logger.info("🔄 No segment timestamps available, creating from word timestamps...")
+            try:
+                # Group words into segments based on punctuation and gaps
+                segment_timestamps = []
+                current_segment = []
+                segment_gap_threshold = 2.0  # 2 second gap to start new segment
+                
+                for i, word_ts in enumerate(word_timestamps):
+                    if isinstance(word_ts, dict) and 'word' in word_ts:
+                        word = word_ts['word']
+                        start = word_ts.get('start', 0)
+                        end = word_ts.get('end', start + 0.1)
+                        
+                        if not current_segment:
+                            # Start new segment
+                            current_segment = [{'word': word, 'start': start, 'end': end}]
+                        else:
+                            # Check if gap is small enough to continue segment
+                            last_end = current_segment[-1]['end']
+                            gap = start - last_end
+                            
+                            # Also check for sentence-ending punctuation
+                            last_word = current_segment[-1]['word']
+                            is_sentence_end = last_word.endswith(('.', '!', '?'))
+                            
+                            if gap <= segment_gap_threshold and not is_sentence_end:
+                                # Continue current segment
+                                current_segment.append({'word': word, 'start': start, 'end': end})
+                            else:
+                                # Finish current segment and start new one
+                                segment_text = ' '.join([w['word'] for w in current_segment])
+                                segment_timestamps.append({
+                                    'text': segment_text,
+                                    'start': current_segment[0]['start'],
+                                    'end': current_segment[-1]['end']
+                                })
+                                current_segment = [{'word': word, 'start': start, 'end': end}]
+                
+                # Add the last segment
+                if current_segment:
+                    segment_text = ' '.join([w['word'] for w in current_segment])
+                    segment_timestamps.append({
+                        'text': segment_text,
+                        'start': current_segment[0]['start'],
+                        'end': current_segment[-1]['end']
+                    })
+                
+                logger.info(f"✅ Created {len(segment_timestamps)} segment timestamps from {len(word_timestamps)} words")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to create segment timestamps from word timestamps: {e}")
+        
         
         result = {
             'text': text_content,
@@ -2108,6 +2229,40 @@ def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: in
         logger.warning(f"⚠️ Silence detection failed: {e}, using time-based splitting")
         return [0, len(audio_data)]
 
+def find_best_speaker_for_time_segment(speaker_segments: List[Dict], segment_start: float, segment_end: float) -> str:
+    """
+    Find the best matching speaker for a given time segment.
+    
+    Args:
+        speaker_segments: List of speaker segments with start/end times
+        segment_start: Start time of the segment to match
+        segment_end: End time of the segment to match
+        
+    Returns:
+        Speaker ID of the best match, or "Speaker_00" if no good match found
+    """
+    best_speaker = "Speaker_00"
+    max_overlap = 0.0
+    
+    for speaker_seg in speaker_segments:
+        spk_start = speaker_seg.get('start', speaker_seg.get('start_time', 0))
+        spk_end = speaker_seg.get('end', speaker_seg.get('end_time', 0))
+        
+        # Calculate overlap between segments
+        overlap_start = max(segment_start, spk_start)
+        overlap_end = min(segment_end, spk_end)
+        overlap = max(0, overlap_end - overlap_start)
+        
+        if overlap > max_overlap:
+            max_overlap = overlap
+            best_speaker = speaker_seg.get('speaker', 'Speaker_00')
+    
+    # Only return speaker if there's meaningful overlap (at least 10ms)
+    if max_overlap > 0.01:
+        return best_speaker
+    else:
+        return "Speaker_00"
+
 def find_optimal_split_point(target_sample: int, silence_boundaries: List[int], 
                            sample_rate: int, chunk_duration: int) -> int:
     """
@@ -2857,6 +3012,9 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         
         # Match timestamps to assign speakers using merged segments
         logger.info("🔗 Matching timestamps for speaker assignment...")
+        logger.info(f"🔍 DEBUG - transcription_result keys: {list(transcription_result.keys())}")
+        logger.info(f"🔍 DEBUG - transcription_result text length: {len(transcription_result.get('text', ''))}")
+        logger.info(f"🔍 DEBUG - transcription_result text preview: {transcription_result.get('text', '')[:200]}...")
         
         if transcription_result.get('text'):
             # Use segment-level timestamps for matching
@@ -3027,7 +3185,10 @@ def handler(job):
                     file_size_mb = file_size / 1024 / 1024
                     logger.info(f"📁 Downloaded: {local_audio_file} ({file_size_mb:.1f}MB)")
                     
-                    # Process the downloaded file directly
+                    # Process the downloaded file with proper chunking workflow
+                    logger.info("🎯 Starting comprehensive Firebase URL workflow...")
+                    logger.info("📋 Workflow: Download → Duration Check → Chunking (if >15min) → Transcribe + Diarize → Merge with Speaker Consistency")
+                    
                     result = process_downloaded_audio(
                         audio_file_path=local_audio_file,
                         include_timestamps=include_timestamps,
