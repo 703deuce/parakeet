@@ -642,6 +642,10 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         else:
             logger.info("✅ Using original mono audio for diarization")
         
+        # Initialize segments list before try block
+        segments = []
+        
+        try:
             # Run pyannote diarization with adjusted parameters
             logger.info("Running pyannote diarization pipeline...")
             if pipeline_params:
@@ -652,61 +656,67 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 diarization = diarization_model(mono_audio_path)
             
             # Convert pyannote output to our format with speaker embeddings
-            segments = []
             speaker_embeddings = {}  # Store embeddings per speaker
         
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            segment_duration = turn.end - turn.start
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                segment_duration = turn.end - turn.start
+                
+                # Skip very short segments (< 0.5 seconds) as they're unreliable
+                if segment_duration < 0.5:
+                    logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+                    continue
+                
+                # Extract speaker embedding for this segment
+                try:
+                    # Get the embedding from pyannote's internal representation
+                    if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
+                        # Try to extract embedding from the diarization result
+                        embedding = extract_speaker_embedding_from_pyannote(diarization, speaker, turn.start, turn.end, mono_audio_path)
+                        if embedding is not None:
+                            if speaker not in speaker_embeddings:
+                                speaker_embeddings[speaker] = []
+                            speaker_embeddings[speaker].append(embedding)
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
+                
+                segments.append({
+                    'start': turn.start,
+                    'end': turn.end,
+                    'speaker': speaker,
+                    'duration': segment_duration
+                })
+                logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
             
-            # Skip very short segments (< 0.5 seconds) as they're unreliable
-            if segment_duration < 0.5:
-                logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
-                continue
+            # Average embeddings per speaker for better representation
+            for speaker, embeddings_list in speaker_embeddings.items():
+                if len(embeddings_list) > 1:
+                    # Average multiple embeddings for this speaker
+                    import numpy as np
+                    avg_embedding = np.mean(embeddings_list, axis=0)
+                    speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                    logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
             
-            # Extract speaker embedding for this segment
-            try:
-                # Get the embedding from pyannote's internal representation
-                if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
-                    # Try to extract embedding from the diarization result
-                    embedding = extract_speaker_embedding_from_pyannote(diarization, speaker, turn.start, turn.end, mono_audio_path)
-                    if embedding is not None:
-                        if speaker not in speaker_embeddings:
-                            speaker_embeddings[speaker] = []
-                        speaker_embeddings[speaker].append(embedding)
-            except Exception as e:
-                logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
+            # Store embeddings in segments for later use
+            for segment in segments:
+                speaker = segment['speaker']
+                if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                    segment['speaker_embedding'] = speaker_embeddings[speaker][0]
             
-            segments.append({
-                'start': turn.start,
-                'end': turn.end,
-                'speaker': speaker,
-                'duration': segment_duration
-            })
-            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
-        
-        # Average embeddings per speaker for better representation
-        for speaker, embeddings_list in speaker_embeddings.items():
-            if len(embeddings_list) > 1:
-                # Average multiple embeddings for this speaker
-                import numpy as np
-                avg_embedding = np.mean(embeddings_list, axis=0)
-                speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
-        
-        # Store embeddings in segments for later use
-        for segment in segments:
-            speaker = segment['speaker']
-            if speaker in speaker_embeddings and speaker_embeddings[speaker]:
-                segment['speaker_embedding'] = speaker_embeddings[speaker][0]
-        
-        logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
-        if segments:
-            speakers_found = set(seg['speaker'] for seg in segments)
-            logger.info(f"Speakers detected: {speakers_found}")
-        else:
-            logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
+            logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+            if segments:
+                speakers_found = set(seg['speaker'] for seg in segments)
+                logger.info(f"Speakers detected: {speakers_found}")
+            else:
+                logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
+                
+        except Exception as e:
+            logger.error(f"Error in pyannote speaker diarization: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # segments is already initialized as empty list, so continue with fallbacks
             
-            # FALLBACK 1: Try with much more relaxed parameters
+        # FALLBACK 1: Try with much more relaxed parameters
+        if not segments:
             try:
                 logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
                 fallback_params = {
