@@ -346,6 +346,19 @@ def load_diarization_model(hf_token=None):
         # Check if model is already cached (simple approach like working old handler)
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
         
+        # DEBUG: Log cache directory status for debugging
+        logger.info(f"🔍 DEBUG: Checking cache directory: {pyannote_cache_dir}")
+        logger.info(f"🔍 DEBUG: Cache dir exists: {os.path.exists(pyannote_cache_dir)}")
+        if os.path.exists(pyannote_cache_dir):
+            try:
+                cache_files = os.listdir(pyannote_cache_dir)
+                logger.info(f"🔍 DEBUG: Cache files found: {cache_files}")
+                logger.info(f"🔍 DEBUG: config.yaml exists: {os.path.exists(cached_config_path)}")
+            except Exception as e:
+                logger.info(f"🔍 DEBUG: Error listing cache dir: {e}")
+        else:
+            logger.info(f"🔍 DEBUG: Cache directory does not exist at all")
+        
         if os.path.exists(cached_config_path):
             logger.info(f"📦 Loading cached pyannote model directly from disk: {pyannote_cache_dir}")
             try:
