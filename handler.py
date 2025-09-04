@@ -343,25 +343,10 @@ def load_diarization_model(hf_token=None):
         from pyannote.audio import Pipeline
         import torch
         
-        # Check if model is already cached (multiple possible cache files)
+        # Check if model is already cached (simple approach like working old handler)
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
-        cached_pytorch_path = os.path.join(pyannote_cache_dir, "pytorch_model.bin")
-        cached_hub_path = os.path.join(pyannote_cache_dir, ".huggingface")
         
-        # Log cache directory status for debugging
-        logger.info(f"🔍 Checking cache directory: {pyannote_cache_dir}")
-        logger.info(f"🔍 Cache dir exists: {os.path.exists(pyannote_cache_dir)}")
-        if os.path.exists(pyannote_cache_dir):
-            cache_files = os.listdir(pyannote_cache_dir)
-            logger.info(f"🔍 Cache files found: {cache_files[:10]}")  # Show first 10 files
-        
-        # Check for various cache indicators
-        cache_exists = (os.path.exists(cached_config_path) or 
-                       os.path.exists(cached_pytorch_path) or
-                       os.path.exists(cached_hub_path) or
-                       (os.path.exists(pyannote_cache_dir) and len(os.listdir(pyannote_cache_dir)) > 0))
-        
-        if cache_exists:
+        if os.path.exists(cached_config_path):
             logger.info(f"📦 Loading cached pyannote model directly from disk: {pyannote_cache_dir}")
             try:
                 # Load directly from local cache directory - no internet or token needed!
@@ -373,9 +358,6 @@ def load_diarization_model(hf_token=None):
                     logger.error("HuggingFace token is required for pyannote.audio models")
                     logger.error("Please provide hf_token parameter in your request")
                     logger.error("You can get a token at https://hf.co/settings/tokens")
-                    logger.error("IMPORTANT: You must also accept user conditions at:")
-                    logger.error("  - https://hf.co/pyannote/segmentation-3.0")
-                    logger.error("  - https://hf.co/pyannote/speaker-diarization-3.1")
                     return False
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
@@ -407,9 +389,6 @@ def load_diarization_model(hf_token=None):
                 logger.error("HuggingFace token is required for pyannote.audio models")
                 logger.error("Please provide hf_token parameter in your request")
                 logger.error("You can get a token at https://hf.co/settings/tokens")
-                logger.error("IMPORTANT: You must also accept user conditions at:")
-                logger.error("  - https://hf.co/pyannote/segmentation-3.0")
-                logger.error("  - https://hf.co/pyannote/speaker-diarization-3.1")
                 return False
             
         # Move pipeline to GPU if available
