@@ -246,10 +246,17 @@ def configure_segment_timestamps():
                         # Docs: decoding_cfg.segment_seperators = [".", "?", "!", ";"]
                         decoding_cfg.preserve_alignments = True
                         decoding_cfg.compute_timestamps = True
-                        if hasattr(decoding_cfg, 'segment_seperators'):
-                            decoding_cfg.segment_seperators = [".", "?", "!", ";", ":", ","]
-                        elif hasattr(decoding_cfg, 'segment_separators'):
-                            decoding_cfg.segment_separators = [".", "?", "!", ";", ":", ","]
+                        
+                        # Set segment separators for better segment boundaries (both possible spellings)
+                        segment_separators = [".", "?", "!", ";", ":", ","]
+                        if hasattr(decoding_cfg, 'segment_seperators'):  # Common typo in some NeMo versions
+                            decoding_cfg.segment_seperators = segment_separators
+                            logger.info("✅ Set segment_seperators (typo version)")
+                        if hasattr(decoding_cfg, 'segment_separators'):  # Correct spelling
+                            decoding_cfg.segment_separators = segment_separators
+                            logger.info("✅ Set segment_separators (correct spelling)")
+                        
+                        logger.info(f"🎯 Segment separators configured: {segment_separators}")
                     
                     # Apply the configuration changes (exactly as per NVIDIA docs)
                     # Docs: asr_model.change_decoding_strategy(decoding_cfg)
@@ -469,20 +476,26 @@ def extract_speaker_embedding_from_pyannote(diarization_result, speaker: str, st
             
             # Load a speaker embedding model with error handling
             try:
+                # Try to instantiate the embedding model properly
                 embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb")
                 
                 # Ensure it's actually a model object, not a string
                 if isinstance(embedding_model, str):
-                    logger.warning("⚠️ Embedding model is a string, trying Model.from_pretrained instead")
-                    embedding_model = Model.from_pretrained("speechbrain/spkrec-ecapa-voxceleb")
+                    logger.warning("⚠️ Embedding model is a string, trying alternative loading")
+                    # Skip this method entirely if model loading fails
+                    raise Exception("PretrainedSpeakerEmbedding returned string instead of model")
                 
-                # Check if the model is callable
-                if not callable(embedding_model):
+                # Verify the model is properly loaded
+                if not hasattr(embedding_model, '__call__') and not callable(embedding_model):
                     logger.warning("⚠️ Embedding model is not callable, skipping method 2")
                     raise Exception("Embedding model is not callable")
+                    
+                logger.info("✅ Speaker embedding model loaded successfully")
+                
             except Exception as model_error:
                 logger.warning(f"⚠️ Could not load embedding model: {model_error}")
-                raise Exception(f"Embedding model loading failed: {model_error}")
+                # Don't raise - just skip this method and try method 3
+                raise Exception("Skipping speaker embedding method 2")
             
             # Load and extract audio segment
             import torchaudio
@@ -2233,6 +2246,8 @@ def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: in
     Find silence boundaries in the audio using librosa.
     """
     try:
+        import librosa
+        
         # Convert to mono for silence detection
         if len(audio_data.shape) > 1:
             mono_audio = np.mean(audio_data, axis=1)
@@ -3127,8 +3142,59 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             return result
             
         else:
-            logger.error(f"❌ No transcription text available. Transcription result: {transcription_result}")
-            return {"error": "No transcription text available for speaker assignment"}
+            logger.warning(f"⚠️ No transcription text in main field, checking word_timestamps...")
+            
+            # FALLBACK: Use word-level timestamps if available (even when transcript is empty)
+            word_timestamps = transcription_result.get('word_timestamps', [])
+            if word_timestamps:
+                logger.info(f"✅ Found {len(word_timestamps)} word timestamps - using as fallback")
+                
+                # Create segments from word-level timestamps
+                diarized_results = []
+                for word_ts in word_timestamps:
+                    word_start = word_ts.get('start', 0)
+                    word_end = word_ts.get('end', 0) 
+                    word_text = word_ts.get('word', '')
+                    
+                    # Find the best matching speaker for this word
+                    best_speaker = find_best_speaker_for_time_segment(
+                        merged_segments, word_start, word_end
+                    ) if merged_segments else "Speaker_00"
+                    
+                    diarized_results.append({
+                        "speaker": best_speaker,
+                        "start_time": word_start,
+                        "end_time": word_end,
+                        "text": word_text,
+                        "word_level_fallback": True
+                    })
+                
+                # Assemble full text from words
+                full_text = ' '.join([word_ts.get('word', '') for word_ts in word_timestamps])
+                
+                result = {
+                    "transcript": full_text,
+                    "diarized_transcript": diarized_results,
+                    "word_timestamps": word_timestamps,
+                    "segment_timestamps": [],  # Empty since we used word-level
+                    "char_timestamps": transcription_result.get('char_timestamps', []),
+                    "metadata": {
+                        **transcription_result.get('metadata', {}),
+                        "total_duration": total_duration,
+                        "speaker_count": len(set(seg["speaker"] for seg in diarized_results)),
+                        "word_count": len(word_timestamps),
+                        "diarized_segments": len(diarized_results),
+                        "processing_method": "chunked_with_word_level_fallback",
+                        "fallback_reason": "empty_transcript_but_had_words"
+                    },
+                    "workflow": "chunked_transcription_with_word_level_fallback"
+                }
+                
+                logger.info(f"✅ Word-level fallback completed: {len(word_timestamps)} words, {len(set(seg['speaker'] for seg in diarized_results))} speakers")
+                return result
+            else:
+                logger.error(f"❌ No word timestamps available either. Transcription result keys: {list(transcription_result.keys())}")
+                return {"error": "No transcription text or word timestamps available for speaker assignment"}
             
     except Exception as e:
         logger.error(f"❌ Chunked processing failed: {str(e)}")
