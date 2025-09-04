@@ -343,10 +343,25 @@ def load_diarization_model(hf_token=None):
         from pyannote.audio import Pipeline
         import torch
         
-        # Check if model is already cached
+        # Check if model is already cached (multiple possible cache files)
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
+        cached_pytorch_path = os.path.join(pyannote_cache_dir, "pytorch_model.bin")
+        cached_hub_path = os.path.join(pyannote_cache_dir, ".huggingface")
         
-        if os.path.exists(cached_config_path):
+        # Log cache directory status for debugging
+        logger.info(f"🔍 Checking cache directory: {pyannote_cache_dir}")
+        logger.info(f"🔍 Cache dir exists: {os.path.exists(pyannote_cache_dir)}")
+        if os.path.exists(pyannote_cache_dir):
+            cache_files = os.listdir(pyannote_cache_dir)
+            logger.info(f"🔍 Cache files found: {cache_files[:10]}")  # Show first 10 files
+        
+        # Check for various cache indicators
+        cache_exists = (os.path.exists(cached_config_path) or 
+                       os.path.exists(cached_pytorch_path) or
+                       os.path.exists(cached_hub_path) or
+                       (os.path.exists(pyannote_cache_dir) and len(os.listdir(pyannote_cache_dir)) > 0))
+        
+        if cache_exists:
             logger.info(f"📦 Loading cached pyannote model directly from disk: {pyannote_cache_dir}")
             try:
                 # Load directly from local cache directory - no internet or token needed!
