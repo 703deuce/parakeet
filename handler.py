@@ -260,14 +260,14 @@ def configure_segment_timestamps():
                 except Exception as config_error:
                     logger.warning(f"⚠️ Failed to apply official NeMo config: {config_error}")
                     # Fallback to manual attribute setting
-                    for attr_name in ['timestamps', 'return_timestamps', 'word_timestamps']:
-                        if hasattr(decoding_cfg, attr_name):
-                            setattr(decoding_cfg, attr_name, True)
-                            logger.info(f"✅ Enabled timestamps via '{attr_name}'")
-                            break
-                    
+                for attr_name in ['timestamps', 'return_timestamps', 'word_timestamps']:
+                    if hasattr(decoding_cfg, attr_name):
+                        setattr(decoding_cfg, attr_name, True)
+                        logger.info(f"✅ Enabled timestamps via '{attr_name}'")
+                        break
+                
                     logger.info("🎯 Parakeet v3 segment timestamp configuration completed (fallback)")
-                    return separator_set or punct_enabled or cap_enabled
+                return separator_set or punct_enabled or cap_enabled
                     
             else:
                 logger.warning("⚠️ Could not access model decoding config")
@@ -467,18 +467,22 @@ def extract_speaker_embedding_from_pyannote(diarization_result, speaker: str, st
             from pyannote.audio import Model
             from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
             
-            # Load a speaker embedding model
-            embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb")
-            
-            # Ensure it's actually a model object, not a string
-            if isinstance(embedding_model, str):
-                logger.warning("⚠️ Embedding model is a string, trying Model.from_pretrained instead")
-                embedding_model = Model.from_pretrained("speechbrain/spkrec-ecapa-voxceleb")
-            
-            # Check if the model is callable
-            if not callable(embedding_model):
-                logger.warning("⚠️ Embedding model is not callable, skipping method 2")
-                raise Exception("Embedding model is not callable")
+            # Load a speaker embedding model with error handling
+            try:
+                embedding_model = PretrainedSpeakerEmbedding("speechbrain/spkrec-ecapa-voxceleb")
+                
+                # Ensure it's actually a model object, not a string
+                if isinstance(embedding_model, str):
+                    logger.warning("⚠️ Embedding model is a string, trying Model.from_pretrained instead")
+                    embedding_model = Model.from_pretrained("speechbrain/spkrec-ecapa-voxceleb")
+                
+                # Check if the model is callable
+                if not callable(embedding_model):
+                    logger.warning("⚠️ Embedding model is not callable, skipping method 2")
+                    raise Exception("Embedding model is not callable")
+            except Exception as model_error:
+                logger.warning(f"⚠️ Could not load embedding model: {model_error}")
+                raise Exception(f"Embedding model loading failed: {model_error}")
             
             # Load and extract audio segment
             import torchaudio
@@ -651,49 +655,49 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             segments = []
             speaker_embeddings = {}  # Store embeddings per speaker
         
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                segment_duration = turn.end - turn.start
-                
-                # Skip very short segments (< 0.5 seconds) as they're unreliable
-                if segment_duration < 0.5:
-                    logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
-                    continue
-                
-                # Extract speaker embedding for this segment
-                try:
-                    # Get the embedding from pyannote's internal representation
-                    if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
-                        # Try to extract embedding from the diarization result
-                        embedding = extract_speaker_embedding_from_pyannote(diarization, speaker, turn.start, turn.end, mono_audio_path)
-                        if embedding is not None:
-                            if speaker not in speaker_embeddings:
-                                speaker_embeddings[speaker] = []
-                            speaker_embeddings[speaker].append(embedding)
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
-                
-                segments.append({
-                    'start': turn.start,
-                    'end': turn.end,
-                    'speaker': speaker,
-                    'duration': segment_duration
-                })
-                logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segment_duration = turn.end - turn.start
             
-            # Average embeddings per speaker for better representation
-            for speaker, embeddings_list in speaker_embeddings.items():
-                if len(embeddings_list) > 1:
-                    # Average multiple embeddings for this speaker
-                    import numpy as np
-                    avg_embedding = np.mean(embeddings_list, axis=0)
-                    speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                    logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+            # Skip very short segments (< 0.5 seconds) as they're unreliable
+            if segment_duration < 0.5:
+                logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+                continue
             
-            # Store embeddings in segments for later use
-            for segment in segments:
-                speaker = segment['speaker']
-                if speaker in speaker_embeddings and speaker_embeddings[speaker]:
-                    segment['speaker_embedding'] = speaker_embeddings[speaker][0]
+            # Extract speaker embedding for this segment
+            try:
+                # Get the embedding from pyannote's internal representation
+                if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
+                    # Try to extract embedding from the diarization result
+                    embedding = extract_speaker_embedding_from_pyannote(diarization, speaker, turn.start, turn.end, mono_audio_path)
+                    if embedding is not None:
+                        if speaker not in speaker_embeddings:
+                            speaker_embeddings[speaker] = []
+                        speaker_embeddings[speaker].append(embedding)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
+            
+            segments.append({
+                'start': turn.start,
+                'end': turn.end,
+                'speaker': speaker,
+                'duration': segment_duration
+            })
+            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+        
+        # Average embeddings per speaker for better representation
+        for speaker, embeddings_list in speaker_embeddings.items():
+            if len(embeddings_list) > 1:
+                # Average multiple embeddings for this speaker
+                import numpy as np
+                avg_embedding = np.mean(embeddings_list, axis=0)
+                speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+        
+        # Store embeddings in segments for later use
+        for segment in segments:
+            speaker = segment['speaker']
+            if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                segment['speaker_embedding'] = speaker_embeddings[speaker][0]
         
         logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
         if segments:
@@ -756,29 +760,29 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     logger.error(f"Fallback 2 error: {str(e)}")
                     segments = []
         
-            final_count = len(segments)
-            logger.info(f"🎯 Final diarization result: {final_count} segments")
-            if segments:
-                speakers_found = set(seg['speaker'] for seg in segments)
-                logger.info(f"Speakers detected: {speakers_found}")
-            
-            return segments
+        final_count = len(segments)
+        logger.info(f"🎯 Final diarization result: {final_count} segments")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        
+        return segments
             
     except Exception as e:
         logger.error(f"Error in pyannote speaker diarization: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
-    
+        
     finally:
         # Clean up temporary mono file if created
         for temp_file in temp_files_to_cleanup:
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-            except Exception as cleanup_error:
-                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
     """Extract audio segment from start to end time"""
@@ -2679,9 +2683,10 @@ def apply_aggressive_speaker_merging(diarized_segments: List[Dict], speaker_thre
     """
     try:
         logger.info(f"🔄 Applying speaker consistency merging...")
-        logger.info(f"📊 Input: {len(diarized_segments)} segments")
+        logger.info(f"📊 Input: {len(diarized_segments) if diarized_segments else 0} segments")
         
         if not diarized_segments:
+            logger.warning("⚠️ No diarized segments provided for speaker merging")
             return []
         
         # Group segments by speaker
