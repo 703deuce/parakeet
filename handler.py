@@ -886,7 +886,7 @@ def detect_silence_split_points(audio_path: str, target_chunk_duration: int, aud
                 silence_point = end_of_current + (start_of_next - end_of_current) // 2
                 silence_points.append(silence_point)
         
-        # Add end if there's final silence
+        # Add end if there's final silence see
         if nonsilent_ranges[-1][1] < len(audio):
             silence_points.append(nonsilent_ranges[-1][1] + (len(audio) - nonsilent_ranges[-1][1]) // 2)
         
