@@ -358,6 +358,9 @@ def load_diarization_model(hf_token=None):
                     logger.error("HuggingFace token is required for pyannote.audio models")
                     logger.error("Please provide hf_token parameter in your request")
                     logger.error("You can get a token at https://hf.co/settings/tokens")
+                    logger.error("IMPORTANT: You must also accept user conditions at:")
+                    logger.error("  - https://hf.co/pyannote/segmentation-3.0")
+                    logger.error("  - https://hf.co/pyannote/speaker-diarization-3.1")
                     return False
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
@@ -371,6 +374,10 @@ def load_diarization_model(hf_token=None):
             # Try to load with HuggingFace token if provided
             if hf_token:
                 logger.info("Using provided HuggingFace token for pyannote access")
+                logger.info("IMPORTANT: Make sure you have accepted user conditions at:")
+                logger.info("  - https://hf.co/pyannote/segmentation-3.0")
+                logger.info("  - https://hf.co/pyannote/speaker-diarization-3.1")
+                
                 # Set environment variables for caching
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
                 os.environ['HF_HOME'] = pyannote_cache_dir
@@ -385,6 +392,9 @@ def load_diarization_model(hf_token=None):
                 logger.error("HuggingFace token is required for pyannote.audio models")
                 logger.error("Please provide hf_token parameter in your request")
                 logger.error("You can get a token at https://hf.co/settings/tokens")
+                logger.error("IMPORTANT: You must also accept user conditions at:")
+                logger.error("  - https://hf.co/pyannote/segmentation-3.0")
+                logger.error("  - https://hf.co/pyannote/speaker-diarization-3.1")
                 return False
             
         # Move pipeline to GPU if available
