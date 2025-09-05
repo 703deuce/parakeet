@@ -462,24 +462,24 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
         load_speaker_embedding_model()
 
     try:
-            import torchaudio
+        import torchaudio
         import torch
         # Load segment (mono, 16kHz recommended)
-            waveform, sample_rate = torchaudio.load(audio_path)
+        waveform, sample_rate = torchaudio.load(audio_path)
         # Extract segment samples
-            start_sample = int(start_time * sample_rate)
-            end_sample = int(end_time * sample_rate)
-            segment_waveform = waveform[:, start_sample:end_sample]
+        start_sample = int(start_time * sample_rate)
+        end_sample = int(end_time * sample_rate)
+        segment_waveform = waveform[:, start_sample:end_sample]
         # Ensure mono
         if segment_waveform.shape[0] > 1:
             segment_waveform = segment_waveform.mean(dim=0, keepdim=True)
         segment_waveform = segment_waveform.to(speaker_embedding_classifier.device)
         # Run encoder
-            with torch.no_grad():
+        with torch.no_grad():
             embedding = speaker_embedding_classifier.encode_batch(segment_waveform)
             embedding_np = embedding.squeeze().cpu().numpy()
             return embedding_np
-        except Exception as e:
+    except Exception as e:
         logger.warning(f"⚠️ Speaker embedding extraction via SpeechBrain failed: {str(e)}")
         return None
 
