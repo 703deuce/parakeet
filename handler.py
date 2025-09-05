@@ -2238,6 +2238,42 @@ def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: in
         logger.warning(f"⚠️ Silence detection failed: {e}, using time-based splitting")
         return [0, len(audio_data)]
 
+def create_formatted_transcript(diarized_results: List[Dict]) -> str:
+    """
+    Create a human-readable formatted transcript from diarized results
+    Groups consecutive segments by speaker and formats them nicely
+    """
+    if not diarized_results:
+        return ""
+    
+    formatted_lines = []
+    current_speaker = None
+    current_text = []
+    
+    for segment in diarized_results:
+        speaker = segment.get('speaker', 'Unknown')
+        text = segment.get('text', '').strip()
+        
+        if not text:
+            continue
+            
+        # Convert speaker ID to readable name
+        speaker_name = speaker.replace('_', ' ').title()
+        
+        # If speaker changed, save previous text and start new line
+        if current_speaker != speaker and current_text:
+            formatted_lines.append(f"{current_speaker}: {' '.join(current_text)}")
+            current_text = []
+        
+        current_speaker = speaker_name
+        current_text.append(text)
+    
+    # Add the last speaker's text
+    if current_text:
+        formatted_lines.append(f"{current_speaker}: {' '.join(current_text)}")
+    
+    return '\n\n'.join(formatted_lines)
+
 def find_best_speaker_for_time_segment(speaker_segments: List[Dict], segment_start: float, segment_end: float) -> str:
     """
     Find the best matching speaker for a given time segment.
@@ -3078,8 +3114,12 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             unique_speakers = set(seg["speaker"] for seg in diarized_results)
             word_count = len(transcription_result.get('text', '').split())
             
+            # Create formatted transcript for readability
+            formatted_transcript = create_formatted_transcript(diarized_results)
+            
             result = {
                 "transcript": transcription_result.get('text', ''),
+                "formatted_transcript": formatted_transcript,
                 "diarized_transcript": diarized_results,
                 "word_timestamps": transcription_result.get('word_timestamps', []),
                 "segment_timestamps": transcription_result.get('segment_timestamps', []),
@@ -3135,8 +3175,12 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 # Assemble full text from segments
                 full_text = ' '.join([seg.get('text', '') for seg in segment_timestamps])
                 
+                # Create formatted transcript for readability
+                formatted_transcript = create_formatted_transcript(diarized_results)
+                
                 result = {
                     "transcript": full_text,
+                    "formatted_transcript": formatted_transcript,
                     "diarized_transcript": diarized_results,
                     "word_timestamps": transcription_result.get('word_timestamps', []),
                     "segment_timestamps": segment_timestamps,
@@ -3184,8 +3228,12 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 # Assemble full text from words
                 full_text = ' '.join([word_ts.get('word', '') for word_ts in word_timestamps])
                 
+                # Create formatted transcript for readability
+                formatted_transcript = create_formatted_transcript(diarized_results)
+                
                 result = {
                     "transcript": full_text,
+                    "formatted_transcript": formatted_transcript,
                     "diarized_transcript": diarized_results,
                     "word_timestamps": word_timestamps,
                     "segment_timestamps": [],  # Empty since we used word-level
