@@ -129,10 +129,19 @@ def load_model():
         
         logger.info("Model loaded successfully")
         
-        # Move model to GPU if available
+        # Move model to GPU if available, with error handling
+        try:
         if torch.cuda.is_available():
+                # Test CUDA before moving model
+                torch.cuda.current_device()
             model = model.cuda()
             logger.info("🚀 Model moved to GPU")
+            else:
+                logger.info("🖥️ Model running on CPU (CUDA not available)")
+        except Exception as cuda_error:
+            logger.warning(f"⚠️ CUDA error: {cuda_error}, keeping model on CPU")
+            # Ensure model stays on CPU
+            model = model.cpu()
         
         # Optimize for long audio processing (up to 3 hours with local attention)
         optimize_for_long_audio()
@@ -462,24 +471,24 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
         load_speaker_embedding_model()
 
     try:
-        import torchaudio
+            import torchaudio
         import torch
         # Load segment (mono, 16kHz recommended)
-        waveform, sample_rate = torchaudio.load(audio_path)
+            waveform, sample_rate = torchaudio.load(audio_path)
         # Extract segment samples
-        start_sample = int(start_time * sample_rate)
-        end_sample = int(end_time * sample_rate)
-        segment_waveform = waveform[:, start_sample:end_sample]
+            start_sample = int(start_time * sample_rate)
+            end_sample = int(end_time * sample_rate)
+            segment_waveform = waveform[:, start_sample:end_sample]
         # Ensure mono
         if segment_waveform.shape[0] > 1:
             segment_waveform = segment_waveform.mean(dim=0, keepdim=True)
         segment_waveform = segment_waveform.to(speaker_embedding_classifier.device)
         # Run encoder
-        with torch.no_grad():
+            with torch.no_grad():
             embedding = speaker_embedding_classifier.encode_batch(segment_waveform)
             embedding_np = embedding.squeeze().cpu().numpy()
             return embedding_np
-    except Exception as e:
+        except Exception as e:
         logger.warning(f"⚠️ Speaker embedding extraction via SpeechBrain failed: {str(e)}")
         return None
 
@@ -616,11 +625,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 segment_duration = turn.end - turn.start
                 
-                # Skip very short segments (< 0.5 seconds) as they're unreliable
-                if segment_duration < 0.5:
-                    logger.info(f"⏭️ Skipping short segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
-                    continue
-            
+                # Keep all segments - we need complete speaker coverage for all words
+                # Short segments are still valuable for word-level speaker assignment
+                
                 # Extract speaker embedding for this segment
                 try:
                     # Get the embedding from pyannote's internal representation
@@ -642,27 +649,27 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 })
                 logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
         
-            # Average embeddings per speaker for better representation
-            for speaker, embeddings_list in speaker_embeddings.items():
-                if len(embeddings_list) > 1:
-                    # Average multiple embeddings for this speaker
-                    import numpy as np
-                    avg_embedding = np.mean(embeddings_list, axis=0)
-                    speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                    logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
-            
-            # Store embeddings in segments for later use
-            for segment in segments:
-                speaker = segment['speaker']
-                if speaker in speaker_embeddings and speaker_embeddings[speaker]:
-                    segment['speaker_embedding'] = speaker_embeddings[speaker][0]
-            
-            logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
-            if segments:
-                speakers_found = set(seg['speaker'] for seg in segments)
-                logger.info(f"Speakers detected: {speakers_found}")
-            else:
-                logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
+        # Average embeddings per speaker for better representation
+        for speaker, embeddings_list in speaker_embeddings.items():
+            if len(embeddings_list) > 1:
+                # Average multiple embeddings for this speaker
+                import numpy as np
+                avg_embedding = np.mean(embeddings_list, axis=0)
+                speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+        
+        # Store embeddings in segments for later use
+        for segment in segments:
+            speaker = segment['speaker']
+            if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                segment['speaker_embedding'] = speaker_embeddings[speaker][0]
+        
+        logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        else:
+            logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
                     
         except Exception as e:
             logger.error(f"Error in pyannote speaker diarization: {str(e)}")
@@ -670,7 +677,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             logger.error(f"Traceback: {traceback.format_exc()}")
             # segments is already initialized as empty list, so continue with fallbacks
             
-        # FALLBACK 1: Try with much more relaxed parameters
+            # FALLBACK 1: Try with much more relaxed parameters
         if not segments:
             try:
                 logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
@@ -704,26 +711,26 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             except Exception as e:
                 logger.warning(f"Fallback 1 error: {str(e)}")
             
-        # FALLBACK 2: Create a single speaker segment if still no results
-        if not segments:
-            logger.info("🔄 Fallback 2: Creating single speaker segment for entire audio...")
-            try:
-                # Get audio duration
-                import librosa
-                y, sr = librosa.load(audio_path, sr=None)
-                duration = len(y) / sr
-                
-                segments = [{
-                    'start': 0.0,
-                    'end': duration,
-                    'speaker': 'SPEAKER_00',
-                    'duration': duration
-                }]
-                logger.info(f"✅ Fallback 2: Created single speaker segment (0.0s - {duration:.1f}s)")
-                
-            except Exception as e:
-                logger.error(f"Fallback 2 error: {str(e)}")
-                segments = []
+            # FALLBACK 2: Create a single speaker segment if still no results
+            if not segments:
+                logger.info("🔄 Fallback 2: Creating single speaker segment for entire audio...")
+                try:
+                    # Get audio duration
+                    import librosa
+                    y, sr = librosa.load(audio_path, sr=None)
+                    duration = len(y) / sr
+                    
+                    segments = [{
+                        'start': 0.0,
+                        'end': duration,
+                        'speaker': 'SPEAKER_00',
+                        'duration': duration
+                    }]
+                    logger.info(f"✅ Fallback 2: Created single speaker segment (0.0s - {duration:.1f}s)")
+                    
+                except Exception as e:
+                    logger.error(f"Fallback 2 error: {str(e)}")
+                    segments = []
         
         final_count = len(segments)
         logger.info(f"🎯 Final diarization result: {final_count} segments")
@@ -739,15 +746,15 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
         
-    finally:
-        # Clean up temporary mono file if created
-        for temp_file in temp_files_to_cleanup:
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-            except Exception as cleanup_error:
-                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
+        finally:
+            # Clean up temporary mono file if created
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
     """Extract audio segment from start to end time"""
@@ -1067,9 +1074,23 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         
         try:
             if include_timestamps:
-                # Transcribe with timestamps=True (official NeMo API - exactly as per NVIDIA docs)
-                # Docs: output = asr_model.transcribe(['audio.wav'], timestamps=True)
-                output = model.transcribe([mono_audio_path], timestamps=True)
+                # Transcribe with NeMo v1.23+ parameters for segment-level timestamps
+                # Use the new approach that passes parameters directly to transcribe()
+                transcribe_params = {
+                    'timestamps': True,
+                    'return_word_time_offsets': True,
+                    'return_segment_time_offsets': True,  # This should enable segment timestamps
+                    'preserve_alignments': True,
+                    'compute_timestamps': True
+                }
+                
+                # Try the new parameter approach first
+                try:
+                    output = model.transcribe([mono_audio_path], **transcribe_params)
+                    logger.info("✅ Used NeMo v1.23+ transcribe parameters")
+                except Exception as param_error:
+                    logger.warning(f"⚠️ New parameters failed: {param_error}, falling back to basic timestamps=True")
+                    output = model.transcribe([mono_audio_path], timestamps=True)
             else:
                 output = model.transcribe([mono_audio_path])
         finally:
@@ -1154,9 +1175,9 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     logger.info(f"🔍 Timestamp data keys: {list(timestamp_data.keys()) if hasattr(timestamp_data, 'keys') else 'No keys'}")
                     
                     # Extract using official NeMo structure (exactly as per NVIDIA docs)
-                    word_timestamps = timestamp_data.get('word', [])
-                    segment_timestamps = timestamp_data.get('segment', [])
-                    char_timestamps = timestamp_data.get('char', [])
+                        word_timestamps = timestamp_data.get('word', [])
+                        segment_timestamps = timestamp_data.get('segment', [])
+                        char_timestamps = timestamp_data.get('char', [])
                     
                     logger.info(f"🔍 NeMo API extracted - words: {len(word_timestamps)}, segments: {len(segment_timestamps)}, chars: {len(char_timestamps)}")
                     
@@ -1170,18 +1191,18 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     logger.warning("❌ No .timestamp attribute found - checking alternative access methods")
                     # Fallback methods for different model versions
                     if hasattr(first_result, '__getitem__') and 'timestamp' in first_result:
-                        timestamp_data = first_result['timestamp']
-                        logger.info("✅ Got timestamps via ['timestamp'] key")
-                        word_timestamps = timestamp_data.get('word', [])
-                        segment_timestamps = timestamp_data.get('segment', [])
-                        char_timestamps = timestamp_data.get('char', [])
-                    elif hasattr(first_result, '__getitem__'):
-                        word_timestamps = first_result.get('word_timestamps', [])
-                        segment_timestamps = first_result.get('segment_timestamps', [])
-                        char_timestamps = first_result.get('char_timestamps', [])
-                        logger.info("✅ Got timestamps via direct keys")
-                    else:
-                        logger.warning("❌ Could not find timestamp data in transcription result")
+                    timestamp_data = first_result['timestamp']
+                    logger.info("✅ Got timestamps via ['timestamp'] key")
+                    word_timestamps = timestamp_data.get('word', [])
+                    segment_timestamps = timestamp_data.get('segment', [])
+                    char_timestamps = timestamp_data.get('char', [])
+                elif hasattr(first_result, '__getitem__'):
+                    word_timestamps = first_result.get('word_timestamps', [])
+                    segment_timestamps = first_result.get('segment_timestamps', [])
+                    char_timestamps = first_result.get('char_timestamps', [])
+                    logger.info("✅ Got timestamps via direct keys")
+                else:
+                    logger.warning("❌ Could not find timestamp data in transcription result")
                         
             except Exception as timestamp_error:
                 logger.error(f"❌ Error extracting timestamps: {timestamp_error}")
