@@ -131,11 +131,11 @@ def load_model():
         
         # Move model to GPU if available, with error handling
         try:
-            if torch.cuda.is_available():
+        if torch.cuda.is_available():
                 # Test CUDA before moving model
                 torch.cuda.current_device()
-                model = model.cuda()
-                logger.info("🚀 Model moved to GPU")
+            model = model.cuda()
+            logger.info("🚀 Model moved to GPU")
             else:
                 logger.info("🖥️ Model running on CPU (CUDA not available)")
         except Exception as cuda_error:
@@ -471,24 +471,24 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
         load_speaker_embedding_model()
 
     try:
-        import torchaudio
+            import torchaudio
         import torch
         # Load segment (mono, 16kHz recommended)
-        waveform, sample_rate = torchaudio.load(audio_path)
+            waveform, sample_rate = torchaudio.load(audio_path)
         # Extract segment samples
-        start_sample = int(start_time * sample_rate)
-        end_sample = int(end_time * sample_rate)
-        segment_waveform = waveform[:, start_sample:end_sample]
+            start_sample = int(start_time * sample_rate)
+            end_sample = int(end_time * sample_rate)
+            segment_waveform = waveform[:, start_sample:end_sample]
         # Ensure mono
         if segment_waveform.shape[0] > 1:
             segment_waveform = segment_waveform.mean(dim=0, keepdim=True)
         segment_waveform = segment_waveform.to(speaker_embedding_classifier.device)
         # Run encoder
-        with torch.no_grad():
+            with torch.no_grad():
             embedding = speaker_embedding_classifier.encode_batch(segment_waveform)
             embedding_np = embedding.squeeze().cpu().numpy()
             return embedding_np
-    except Exception as e:
+        except Exception as e:
         logger.warning(f"⚠️ Speaker embedding extraction via SpeechBrain failed: {str(e)}")
         return None
 
@@ -621,63 +621,63 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             
             # Convert pyannote output to our format with speaker embeddings
             speaker_embeddings = {}  # Store embeddings per speaker
+        
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segment_duration = turn.end - turn.start
             
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                segment_duration = turn.end - turn.start
-                
                 # Keep all segments - we need complete speaker coverage for all words
                 # Short segments are still valuable for word-level speaker assignment
-                
-                # Extract speaker embedding for this segment
-                try:
-                    # Get the embedding from pyannote's internal representation
-                    if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
-                        # Try to extract embedding from the diarization result
+            
+            # Extract speaker embedding for this segment
+            try:
+                # Get the embedding from pyannote's internal representation
+                if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
+                    # Try to extract embedding from the diarization result
                         embedding = extract_speaker_embedding(mono_audio_path, turn.start, turn.end)
-                        if embedding is not None:
-                            if speaker not in speaker_embeddings:
-                                speaker_embeddings[speaker] = []
-                            speaker_embeddings[speaker].append(embedding)
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
-                
-                segments.append({
-                    'start': turn.start,
-                    'end': turn.end,
-                    'speaker': speaker,
-                    'duration': segment_duration
-                })
-                logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+                    if embedding is not None:
+                        if speaker not in speaker_embeddings:
+                            speaker_embeddings[speaker] = []
+                        speaker_embeddings[speaker].append(embedding)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
             
-            # Average embeddings per speaker for better representation
-            for speaker, embeddings_list in speaker_embeddings.items():
-                if len(embeddings_list) > 1:
-                    # Average multiple embeddings for this speaker
-                    import numpy as np
-                    avg_embedding = np.mean(embeddings_list, axis=0)
-                    speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                    logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
-            
-            # Store embeddings in segments for later use
-            for segment in segments:
-                speaker = segment['speaker']
-                if speaker in speaker_embeddings and speaker_embeddings[speaker]:
-                    segment['speaker_embedding'] = speaker_embeddings[speaker][0]
-            
-            logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
-            if segments:
-                speakers_found = set(seg['speaker'] for seg in segments)
-                logger.info(f"Speakers detected: {speakers_found}")
-            else:
-                logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
+            segments.append({
+                'start': turn.start,
+                'end': turn.end,
+                'speaker': speaker,
+                'duration': segment_duration
+            })
+            logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+        
+        # Average embeddings per speaker for better representation
+        for speaker, embeddings_list in speaker_embeddings.items():
+            if len(embeddings_list) > 1:
+                # Average multiple embeddings for this speaker
+                import numpy as np
+                avg_embedding = np.mean(embeddings_list, axis=0)
+                speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+        
+        # Store embeddings in segments for later use
+        for segment in segments:
+            speaker = segment['speaker']
+            if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                segment['speaker_embedding'] = speaker_embeddings[speaker][0]
+        
+        logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+        if segments:
+            speakers_found = set(seg['speaker'] for seg in segments)
+            logger.info(f"Speakers detected: {speakers_found}")
+        else:
+            logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
                     
         except Exception as e:
             logger.error(f"Error in pyannote speaker diarization: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             # segments is already initialized as empty list, so continue with fallbacks
-        
-        # FALLBACK 1: Try with much more relaxed parameters
+            
+            # FALLBACK 1: Try with much more relaxed parameters
         if not segments:
             try:
                 logger.info("🔄 Fallback 1: Trying with very relaxed clustering thresholds...")
@@ -746,15 +746,15 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
         
-    finally:
-        # Clean up temporary mono file if created
-        for temp_file in temp_files_to_cleanup:
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-            except Exception as cleanup_error:
-                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
+        finally:
+            # Clean up temporary mono file if created
+            for temp_file in temp_files_to_cleanup:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
 def extract_audio_segment(audio_path: str, start_time: float, end_time: float) -> str:
     """Extract audio segment from start to end time"""
@@ -1090,7 +1090,7 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     logger.info("✅ Used NeMo v1.23+ transcribe parameters")
                 except Exception as param_error:
                     logger.warning(f"⚠️ New parameters failed: {param_error}, falling back to basic timestamps=True")
-                    output = model.transcribe([mono_audio_path], timestamps=True)
+                output = model.transcribe([mono_audio_path], timestamps=True)
             else:
                 output = model.transcribe([mono_audio_path])
         finally:
@@ -1175,9 +1175,9 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     logger.info(f"🔍 Timestamp data keys: {list(timestamp_data.keys()) if hasattr(timestamp_data, 'keys') else 'No keys'}")
                     
                     # Extract using official NeMo structure (exactly as per NVIDIA docs)
-                    word_timestamps = timestamp_data.get('word', [])
-                    segment_timestamps = timestamp_data.get('segment', [])
-                    char_timestamps = timestamp_data.get('char', [])
+                        word_timestamps = timestamp_data.get('word', [])
+                        segment_timestamps = timestamp_data.get('segment', [])
+                        char_timestamps = timestamp_data.get('char', [])
                     
                     logger.info(f"🔍 NeMo API extracted - words: {len(word_timestamps)}, segments: {len(segment_timestamps)}, chars: {len(char_timestamps)}")
                     
@@ -1191,18 +1191,18 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     logger.warning("❌ No .timestamp attribute found - checking alternative access methods")
                     # Fallback methods for different model versions
                     if hasattr(first_result, '__getitem__') and 'timestamp' in first_result:
-                        timestamp_data = first_result['timestamp']
-                        logger.info("✅ Got timestamps via ['timestamp'] key")
-                        word_timestamps = timestamp_data.get('word', [])
-                        segment_timestamps = timestamp_data.get('segment', [])
-                        char_timestamps = timestamp_data.get('char', [])
-                    elif hasattr(first_result, '__getitem__'):
-                        word_timestamps = first_result.get('word_timestamps', [])
-                        segment_timestamps = first_result.get('segment_timestamps', [])
-                        char_timestamps = first_result.get('char_timestamps', [])
-                        logger.info("✅ Got timestamps via direct keys")
-                    else:
-                        logger.warning("❌ Could not find timestamp data in transcription result")
+                    timestamp_data = first_result['timestamp']
+                    logger.info("✅ Got timestamps via ['timestamp'] key")
+                    word_timestamps = timestamp_data.get('word', [])
+                    segment_timestamps = timestamp_data.get('segment', [])
+                    char_timestamps = timestamp_data.get('char', [])
+                elif hasattr(first_result, '__getitem__'):
+                    word_timestamps = first_result.get('word_timestamps', [])
+                    segment_timestamps = first_result.get('segment_timestamps', [])
+                    char_timestamps = first_result.get('char_timestamps', [])
+                    logger.info("✅ Got timestamps via direct keys")
+                else:
+                    logger.warning("❌ Could not find timestamp data in transcription result")
                         
             except Exception as timestamp_error:
                 logger.error(f"❌ Error extracting timestamps: {timestamp_error}")
@@ -1850,50 +1850,9 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             elif diarization_model is None:
                 return {"error": "Diarization requested but no HF token provided"}
             
-            # Check if we need chunked diarization (pyannote memory limits)
-            if total_duration > 1200:  # 20 minutes - pyannote limit
-                logger.info(f"🎤 Long audio detected ({total_duration/60:.1f} minutes) - using chunked diarization")
-                
-                # Split audio into chunks for diarization
-                chunks = split_audio_into_chunks(audio_file_path, 900, 30)  # 15min chunks, 30s overlap
-                diarized_segments = []
-                
-                for i, chunk in enumerate(chunks):
-                    logger.info(f"🎤 Diarizing chunk {i+1}/{len(chunks)}: {chunk['file_path']}")
-                    
-                    try:
-                        # Run diarization on this chunk
-                        chunk_diarized = perform_speaker_diarization(chunk['file_path'], num_speakers)
-                        
-                        if chunk_diarized:
-                            # Adjust timestamps to global timeline
-                            chunk_offset = chunk['start_time']
-                            for segment in chunk_diarized:
-                                segment['start'] += chunk_offset
-                                segment['end'] += chunk_offset
-                                segment['start_time'] = segment['start']
-                                segment['end_time'] = segment['end']
-                            
-                            diarized_segments.extend(chunk_diarized)
-                            logger.info(f"✅ Chunk {i+1} diarization: {len(chunk_diarized)} segments")
-                        else:
-                            logger.warning(f"⚠️ Chunk {i+1} diarization failed")
-                            
-                    except Exception as e:
-                        logger.error(f"❌ Chunk {i+1} diarization error: {e}")
-                        continue
-                        
-                    finally:
-                        # Clean up chunk file
-                        try:
-                            if os.path.exists(chunk['file_path']):
-                                os.unlink(chunk['file_path'])
-                        except Exception as cleanup_error:
-                            logger.warning(f"⚠️ Could not clean up chunk file: {cleanup_error}")
-            else:
-                # Short audio - can run diarization on complete file
-                logger.info("🎤 Running speaker diarization on complete audio file...")
-                diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+            # Run diarization on complete audio file (pyannote can handle long audio)
+            logger.info(f"🎤 Running speaker diarization on complete audio file ({total_duration/60:.1f} minutes)...")
+            diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
             
             # Apply speaker consistency merging
             logger.info(f"🔄 Applying speaker consistency merging (threshold: {speaker_threshold})")
@@ -2999,59 +2958,23 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                 "single_speaker_mode": single_speaker_mode
             }
         
-        # Run diarization on each chunk individually (pyannote has memory limits)
-        logger.info("🎤 Running speaker diarization on each chunk individually...")
-        chunk_diarization_results = []
+        # Run diarization on complete audio file (pyannote can handle long audio)
+        logger.info(f"🎤 Running speaker diarization on complete audio file ({total_duration/60:.1f} minutes)...")
+        diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
         
-        # Split audio into chunks for diarization
-        chunks = split_audio_into_chunks(audio_file_path, 900, 30)  # 15min chunks, 30s overlap
-        
-        for i, chunk in enumerate(chunks):
-            logger.info(f"🎤 Diarizing chunk {i+1}/{len(chunks)}: {chunk['file_path']}")
-            
-            try:
-                # Run diarization on this chunk
-                chunk_diarized = perform_speaker_diarization(chunk['file_path'], num_speakers)
-                
-                if chunk_diarized:
-                    # Adjust timestamps to global timeline
-                    chunk_offset = chunk['start_time']
-                    for segment in chunk_diarized:
-                        segment['start'] += chunk_offset
-                        segment['end'] += chunk_offset
-                        segment['start_time'] = segment['start']
-                        segment['end_time'] = segment['end']
-                    
-                    chunk_diarization_results.extend(chunk_diarized)
-                    logger.info(f"✅ Chunk {i+1} diarization: {len(chunk_diarized)} segments")
-                else:
-                    logger.warning(f"⚠️ Chunk {i+1} diarization failed")
-                    
-            except Exception as e:
-                logger.error(f"❌ Chunk {i+1} diarization error: {e}")
-                continue
-                
-            finally:
-                # Clean up chunk file
-                try:
-                    if os.path.exists(chunk['file_path']):
-                        os.unlink(chunk['file_path'])
-                except Exception as cleanup_error:
-                    logger.warning(f"⚠️ Could not clean up chunk file: {cleanup_error}")
-        
-        if not chunk_diarization_results:
-            logger.warning("⚠️ No diarized segments found from any chunk, returning transcription only")
+        if not diarized_segments:
+            logger.warning("⚠️ No diarized segments found, returning transcription only")
             return {
                 **transcription_result,
                 "workflow": "chunked_transcription_fallback",
                 "total_duration": total_duration,
-                "processing_method": "chunked_diarization_failed"
+                "processing_method": "diarization_failed"
             }
         
-        # Apply speaker consistency merging using embeddings from chunked diarization
-        logger.info(f"🔄 Applying speaker consistency merging across chunks (threshold: {speaker_threshold})")
+        # Apply speaker consistency merging using embeddings from full diarization
+        logger.info(f"🔄 Applying speaker consistency merging (threshold: {speaker_threshold})")
         merged_segments = apply_aggressive_speaker_merging(
-            chunk_diarization_results, 
+            diarized_segments, 
             speaker_threshold=speaker_threshold,
             single_speaker_mode=single_speaker_mode
         )
@@ -3130,15 +3053,15 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     "speaker_count": len(unique_speakers),
                     "word_count": word_count,
                     "diarized_segments": len(diarized_results),
-                    "processing_method": "chunked_with_consistent_diarization",
+                    "processing_method": "chunked_transcription_with_full_diarization",
                     "chunks_processed": transcription_result.get('metadata', {}).get('chunks_processed', 1),
                     "speaker_threshold": speaker_threshold,
                     "single_speaker_mode": single_speaker_mode
                 },
-                "workflow": "chunked_transcription_with_aggressive_diarization"
+                "workflow": "chunked_transcription_with_full_diarization"
             }
             
-            logger.info(f"🎉 Chunked processing with consistent speaker detection completed!")
+            logger.info(f"🎉 Chunked transcription with full diarization completed!")
             logger.info(f"📊 Final stats: {word_count} words, {len(unique_speakers)} speakers, {len(diarized_results)} segments")
             logger.info(f"👥 Speaker settings: threshold={speaker_threshold}, single_mode={single_speaker_mode}")
             
