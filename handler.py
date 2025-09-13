@@ -3570,7 +3570,11 @@ if __name__ == "__main__":
         logger.info("🚀 FEATURES: Firebase URL workflow, pyannote diarization, long audio support (3+ hours), streaming mode")
         logger.info("🌐 FIREBASE URL: Send Firebase URL only - no size limits, no base64, direct processing")
         logger.info("🎯 MODEL: NVIDIA Parakeet TDT 0.6B v3 with 25 language support and local attention optimization")
-        runpod.serverless.start({"handler": handler})
+        runpod.serverless.start({
+            "handler": handler,
+            "max_execution_time": None,  # No timeout - allow full diarization to complete
+            "timeout": None
+        })
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
         exit(1)
