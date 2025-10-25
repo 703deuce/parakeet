@@ -1,5 +1,4 @@
-# Use the PyTorch version from September 2024
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
@@ -16,7 +15,18 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install --upgrade pip
 
-# Just install everything like you did on Sept 12
+# WORKAROUND: Install wheel first (fixes youtokentome build)
+RUN pip install wheel
+
+# Install Cython for youtokentome
+RUN pip install "Cython==0.29.37"
+
+# Pin critical packages
+RUN pip install --no-cache-dir \
+    numpy==1.26.4 \
+    huggingface-hub==0.23.5
+
+# Install nemo and pyannote
 RUN pip install --no-cache-dir \
     nemo_toolkit[asr]==1.23.0 \
     pyannote.audio==3.3.2 \
