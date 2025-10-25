@@ -21,20 +21,28 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install --upgrade pip wheel
 
-# Install Cython and youtokentome directly
+# Install Cython GLOBALLY so it's available in build environments
 RUN pip install --no-cache-dir "Cython==0.29.37"
-RUN pip install --no-cache-dir "youtokentome"
+
+# Install youtokentome from working fork
+RUN pip install --no-cache-dir "git+https://github.com/LahiLuk/YouTokenToMe.git"
 
 # Install numpy and huggingface-hub first
 RUN pip install --no-cache-dir \
     "numpy==1.26.4" \
     "huggingface-hub==0.23.5"
 
-# Install nemo and pyannote normally
+# Install nemo WITHOUT dependency check, then pyannote and runpod
+RUN pip install --no-cache-dir --no-deps "nemo_toolkit[asr]==1.23.0" && \
+    pip install --no-cache-dir "pyannote.audio==3.3.2" "runpod==1.5.0"
+
+# Install all nemo dependencies manually
 RUN pip install --no-cache-dir \
-    "nemo_toolkit[asr]==1.23.0" \
-    "pyannote.audio==3.3.2" \
-    "runpod==1.5.0"
+    hydra-core omegaconf pytorch-lightning torchmetrics \
+    transformers webdataset editdistance jiwer \
+    kaldi-python-io librosa marshmallow matplotlib \
+    numba onnx pandas sacremoses sentencepiece \
+    scipy tensorboard text-unidecode wget wrapt
 
 COPY handler.py .
 
