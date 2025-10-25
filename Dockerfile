@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
+# CRITICAL: Install Cython first (required by youtokentome/NeMo)
+RUN pip install "Cython<3.0"
+
 # Install ALL packages with exact versions from Sept 12, 2024
 RUN pip install --no-cache-dir \
     "cuda-python==12.6.0" \
