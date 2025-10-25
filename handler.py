@@ -1,5 +1,6 @@
 import runpod
 import torch
+import torchvision  # CRITICAL: Import before pyannote loads to register torchvision::nms operator
 import torchaudio
 import numpy as np
 import base64
