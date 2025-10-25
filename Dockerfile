@@ -11,12 +11,17 @@ WORKDIR /app
 RUN echo "numpy==1.26.4" > /app/constraints.txt && \
     echo "huggingface-hub==0.23.5" >> /app/constraints.txt
 
+# Install system packages AND upgrade libstdc++
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
     libsndfile1 \
     sox \
     git \
+    software-properties-common \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && apt-get update \
+    && apt-get install -y --only-upgrade libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --upgrade pip wheel
