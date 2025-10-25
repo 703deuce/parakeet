@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
+# FIX: Install compatible torchvision for PyTorch 2.2.0
+RUN pip install torchvision==0.17.0 torchaudio==2.2.0
+
 # Install core dependencies (keep base image PyTorch 2.2.0)
 RUN pip install "cuda-python>=12.3"
 RUN pip install numpy soundfile librosa
