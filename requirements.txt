@@ -29,4 +29,4 @@ requests
 pydub
 lazy_loader
 matplotlib
-pyannote.audio
+pyannote.audio>=3.0,<4.0

@@ -28,8 +28,8 @@ RUN pip install pooch numba llvmlite platformdirs future lazy_loader
 # Install NeMo toolkit (this might upgrade torchvision)
 RUN pip install "nemo_toolkit[asr]"
 
-# Install pyannote (this might also upgrade torchvision)
-RUN pip install pyannote.audio
+# CRITICAL FIX: Pin to pyannote 3.x (what you had on Sept 12)
+RUN pip install "pyannote.audio>=3.0,<4.0"
 
 # Install other packages
 RUN pip install pydub runpod>=1.5.0
