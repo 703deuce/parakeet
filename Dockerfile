@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
@@ -25,18 +25,15 @@ RUN apt-get update && apt-get install -y \
 # Symlink the newer libstdc++ from gcc-11
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/conda/lib/libstdc++.so.6
 
-RUN pip install --upgrade pip wheel
+RUN pip install --upgrade pip wheel packaging
 
-# Install Cython for youtokentome
+# Install Cython and build dependencies
 RUN pip install --no-cache-dir "Cython"
 
-# Install youtokentome from working fork
+# Install youtokentome from working fork FIRST
 RUN pip install --no-cache-dir "git+https://github.com/LahiLuk/YouTokenToMe.git"
 
-# Install Megatron-LM (required for NeMo 2.x)
-RUN pip install --no-cache-dir megatron-core
-
-# Install NeMo 2.4 or latest 2.x (for Parakeet v3)
+# Install NeMo 2.4+ with ALL its dependencies
 RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 
 # Install pyannote and runpod
