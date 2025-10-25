@@ -16,13 +16,14 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Install build dependencies
-RUN pip install "Cython<3.0" wheel setuptools
+# CRITICAL FIXES: Pin numpy and huggingface_hub to working versions
+RUN pip install --no-cache-dir \
+    "numpy==1.26.4" \
+    "huggingface-hub==0.24.7"
 
-# Install all dependencies FIRST
+# Install all other dependencies
 RUN pip install --no-cache-dir \
     "cuda-python==12.6.0" \
-    "numpy==1.26.4" \
     "soundfile==0.12.1" \
     "librosa==0.10.2.post1" \
     "hydra-core==1.3.2" \
@@ -48,26 +49,25 @@ RUN pip install --no-cache-dir \
     "lazy_loader==0.4" \
     "pydub==0.25.1"
 
+# Install pytorch-lightning and dependencies for NeMo
+RUN pip install --no-cache-dir \
+    "pytorch-lightning==2.4.0" \
+    "torchmetrics==1.4.2"
+
 # Install NeMo WITHOUT youtokentome dependency
 RUN pip install --no-cache-dir --no-deps "nemo_toolkit==1.23.0"
 
-# Now install NeMo's required dependencies manually (skip youtokentome)
+# Install NeMo's required dependencies manually
 RUN pip install --no-cache-dir \
-    pytorch-lightning \
-    torchmetrics \
     webdataset \
     braceexpand \
     editdistance \
     einops \
     frozendict \
-    ipadic \
-    jieba \
     kaldi-python-io \
     kaldiio \
     marshmallow \
-    nemo-text-processing \
     packaging \
-    pangu \
     pyannote.core \
     pyannote.metrics \
     rouge-score \
