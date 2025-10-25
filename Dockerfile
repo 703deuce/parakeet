@@ -33,6 +33,9 @@ RUN pip install --no-cache-dir "Cython"
 # Install youtokentome from working fork FIRST
 RUN pip install --no-cache-dir "git+https://github.com/LahiLuk/YouTokenToMe.git"
 
+# Install megatron-core EXPLICITLY (required for NeMo 2.x)
+RUN pip install --no-cache-dir "megatron-core"
+
 # Install NeMo 2.4+ with ALL its dependencies
 RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 
