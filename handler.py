@@ -1958,6 +1958,10 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                 # Format diarized output
                 final_result = {
                     'diarized_transcript': diarized_results,
+                    'word_timestamps': transcription_result.get('word_timestamps', []),
+                    'segment_timestamps': transcription_result.get('segment_timestamps', []),
+                    'char_timestamps': transcription_result.get('char_timestamps', []),
+                    'transcript': transcription_result.get('text', ''),
                     'audio_duration_seconds': total_duration,
                     'chunks_processed': 1,  # Single file processing
                     'segments_processed': len(diarized_results),
