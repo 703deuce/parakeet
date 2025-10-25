@@ -43,7 +43,7 @@ RUN pip install --no-cache-dir \
     "lazy_loader==0.4" \
     "pydub==0.25.1"
 
-# Install NeMo dependencies with specific versions
+# Install NeMo dependencies first
 RUN pip install --no-cache-dir \
     "pytorch-lightning==2.4.0" \
     "torchmetrics==1.4.2" \
@@ -59,10 +59,14 @@ RUN pip install --no-cache-dir \
     "pyannote.core" \
     "pyannote.metrics" \
     "rouge-score" \
-    "wrapt"
+    "wrapt" \
+    "text-unidecode" \
+    "inflect"
 
-# Install NeMo and pyannote
-RUN pip install --no-cache-dir "nemo_toolkit[asr]==1.23.0"
+# CRITICAL: Install NeMo WITHOUT dependencies (skips youtokentome)
+RUN pip install --no-deps --no-cache-dir "nemo_toolkit==1.23.0"
+
+# Install pyannote and runpod
 RUN pip install --no-cache-dir "pyannote.audio==3.3.2"
 RUN pip install --no-cache-dir "runpod==1.5.0"
 
