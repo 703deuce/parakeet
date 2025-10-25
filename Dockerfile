@@ -16,12 +16,7 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# CRITICAL FIXES: Pin numpy and huggingface_hub to working versions
-RUN pip install --no-cache-dir \
-    "numpy==1.26.4" \
-    "huggingface-hub==0.24.7"
-
-# Install all other dependencies
+# Install base dependencies with correct versions
 RUN pip install --no-cache-dir \
     "cuda-python==12.6.0" \
     "soundfile==0.12.1" \
@@ -42,42 +37,39 @@ RUN pip install --no-cache-dir \
     "resampy==0.4.3" \
     "jiwer==3.0.4" \
     "pooch==1.8.2" \
-    "numba==0.60.0" \
     "llvmlite==0.43.0" \
     "platformdirs==4.3.6" \
     "future==1.0.0" \
     "lazy_loader==0.4" \
     "pydub==0.25.1"
 
-# Install pytorch-lightning and dependencies for NeMo
+# Install NeMo dependencies with specific versions
 RUN pip install --no-cache-dir \
     "pytorch-lightning==2.4.0" \
-    "torchmetrics==1.4.2"
+    "torchmetrics==1.4.2" \
+    "webdataset" \
+    "braceexpand" \
+    "editdistance" \
+    "einops" \
+    "frozendict" \
+    "kaldi-python-io" \
+    "kaldiio" \
+    "marshmallow" \
+    "packaging" \
+    "pyannote.core" \
+    "pyannote.metrics" \
+    "rouge-score" \
+    "wrapt"
 
-# Install NeMo WITHOUT youtokentome dependency
-RUN pip install --no-cache-dir --no-deps "nemo_toolkit==1.23.0"
-
-# Install NeMo's required dependencies manually
-RUN pip install --no-cache-dir \
-    webdataset \
-    braceexpand \
-    editdistance \
-    einops \
-    frozendict \
-    kaldi-python-io \
-    kaldiio \
-    marshmallow \
-    packaging \
-    pyannote.core \
-    pyannote.metrics \
-    rouge-score \
-    wrapt
-
-# Install pyannote.audio
+# Install NeMo and pyannote
+RUN pip install --no-cache-dir "nemo_toolkit[asr]==1.23.0"
 RUN pip install --no-cache-dir "pyannote.audio==3.3.2"
-
-# Install RunPod
 RUN pip install --no-cache-dir "runpod==1.5.0"
+
+# CRITICAL FIX: Force correct versions AFTER everything else
+RUN pip install --force-reinstall --no-deps "numpy==1.26.4"
+RUN pip install --force-reinstall --no-deps "huggingface-hub==0.24.7"
+RUN pip install --force-reinstall --no-deps "numba==0.60.0"
 
 # Copy the handler script
 COPY handler.py .
