@@ -1941,6 +1941,54 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                             })
                             
                     logger.info(f"✅ Assigned speakers to {len(diarized_results)} segments")
+                    
+                    # Merge consecutive segments from the same speaker
+                    merged_results = []
+                    current_speaker = None
+                    current_text = ""
+                    current_start = None
+                    current_end = None
+                    
+                    for segment in diarized_results:
+                        speaker = segment['speaker']
+                        text = segment['text']
+                        start_time = segment['start_time']
+                        end_time = segment['end_time']
+                        
+                        if current_speaker is None or speaker != current_speaker:
+                            # Save previous segment if exists
+                            if current_speaker is not None:
+                                merged_results.append({
+                                    'speaker': current_speaker,
+                                    'start_time': current_start,
+                                    'end_time': current_end,
+                                    'text': current_text.strip(),
+                                    'overlap_duration': segment.get('overlap_duration', 0)
+                                })
+                            
+                            # Start new segment
+                            current_speaker = speaker
+                            current_text = text
+                            current_start = start_time
+                            current_end = end_time
+                        else:
+                            # Same speaker - merge with current segment
+                            current_text += " " + text
+                            current_end = end_time
+                    
+                    # Don't forget the last segment
+                    if current_speaker is not None:
+                        merged_results.append({
+                            'speaker': current_speaker,
+                            'start_time': current_start,
+                            'end_time': current_end,
+                            'text': current_text.strip(),
+                            'overlap_duration': diarized_results[-1].get('overlap_duration', 0) if diarized_results else 0
+                        })
+                    
+                    # Replace diarized_results with merged results
+                    diarized_results = merged_results
+                    logger.info(f"🔄 Merged consecutive speakers: {len(diarized_results)} final segments")
                 
                 else:
                     logger.error("❌ No segment timestamps available - Parakeet v3 should always produce segment timestamps")
