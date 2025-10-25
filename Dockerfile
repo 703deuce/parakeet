@@ -43,11 +43,11 @@ RUN pip install --no-cache-dir \
     "lazy_loader==0.4" \
     "pydub==0.25.1"
 
-# Install NeMo dependencies first
+# Install NeMo dependencies (EXCEPT youtokentome)
 RUN pip install --no-cache-dir \
-    "pytorch-lightning==2.4.0" \
+    "pytorch-lightning==2.0.7" \
     "torchmetrics==1.4.2" \
-    "webdataset" \
+    "webdataset==0.1.62" \
     "braceexpand" \
     "editdistance" \
     "einops" \
@@ -61,7 +61,12 @@ RUN pip install --no-cache-dir \
     "rouge-score" \
     "wrapt" \
     "text-unidecode" \
-    "inflect"
+    "inflect" \
+    "onnx" \
+    "tensorboard" \
+    "wget" \
+    "sox" \
+    "wandb"
 
 # CRITICAL: Install NeMo WITHOUT dependencies (skips youtokentome)
 RUN pip install --no-deps --no-cache-dir "nemo_toolkit==1.23.0"
