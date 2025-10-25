@@ -4,21 +4,22 @@ FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including C++ compiler for NeMo builds
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
     libsndfile1 \
     sox \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# CRITICAL: Install Cython first (required by youtokentome/NeMo)
-RUN pip install "Cython<3.0"
+# Install build dependencies
+RUN pip install "Cython<3.0" wheel setuptools
 
-# Install ALL packages with exact versions from Sept 12, 2024
+# Install all dependencies FIRST
 RUN pip install --no-cache-dir \
     "cuda-python==12.6.0" \
     "numpy==1.26.4" \
@@ -45,10 +46,38 @@ RUN pip install --no-cache-dir \
     "platformdirs==4.3.6" \
     "future==1.0.0" \
     "lazy_loader==0.4" \
-    "pydub==0.25.1" \
-    "nemo_toolkit[asr]==1.23.0" \
-    "pyannote.audio==3.3.2" \
-    "runpod==1.5.0"
+    "pydub==0.25.1"
+
+# Install NeMo WITHOUT youtokentome dependency
+RUN pip install --no-cache-dir --no-deps "nemo_toolkit==1.23.0"
+
+# Now install NeMo's required dependencies manually (skip youtokentome)
+RUN pip install --no-cache-dir \
+    pytorch-lightning \
+    torchmetrics \
+    webdataset \
+    braceexpand \
+    editdistance \
+    einops \
+    frozendict \
+    ipadic \
+    jieba \
+    kaldi-python-io \
+    kaldiio \
+    marshmallow \
+    nemo-text-processing \
+    packaging \
+    pangu \
+    pyannote.core \
+    pyannote.metrics \
+    rouge-score \
+    wrapt
+
+# Install pyannote.audio
+RUN pip install --no-cache-dir "pyannote.audio==3.3.2"
+
+# Install RunPod
+RUN pip install --no-cache-dir "runpod==1.5.0"
 
 # Copy the handler script
 COPY handler.py .
