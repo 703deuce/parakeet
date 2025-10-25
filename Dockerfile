@@ -8,9 +8,8 @@ ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 WORKDIR /app
 
-# Create constraints file
-RUN echo "numpy==1.26.4" > /app/constraints.txt && \
-    echo "huggingface-hub==0.23.5" >> /app/constraints.txt
+# Create constraints file - allow numpy 1.x, flexible huggingface-hub
+RUN echo "numpy<2.0" > /app/constraints.txt
 
 # Install system packages AND gcc-11 for newer libstdc++
 RUN apt-get update && apt-get install -y \
@@ -28,22 +27,17 @@ RUN ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/conda/lib/libstdc++.so.
 
 RUN pip install --upgrade pip wheel
 
-# Install Cython GLOBALLY so it's available in build environments
-RUN pip install --no-cache-dir "Cython==0.29.37"
+# Install Cython for youtokentome
+RUN pip install --no-cache-dir "Cython"
 
 # Install youtokentome from working fork
 RUN pip install --no-cache-dir "git+https://github.com/LahiLuk/YouTokenToMe.git"
 
-# Install numpy and huggingface-hub first
-RUN pip install --no-cache-dir \
-    "numpy==1.26.4" \
-    "huggingface-hub==0.23.5"
-
-# NOW install nemo WITH all dependencies (youtokentome already installed, so it won't try to build it)
-RUN pip install --no-cache-dir "nemo_toolkit[asr]==1.23.0"
+# Install NeMo 2.4 or latest 2.x (for Parakeet v3)
+RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 
 # Install pyannote and runpod
-RUN pip install --no-cache-dir "pyannote.audio==3.3.2" "runpod==1.5.0"
+RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
 COPY handler.py .
 
