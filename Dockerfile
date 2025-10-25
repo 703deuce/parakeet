@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 ENV PIP_CONSTRAINT=/app/constraints.txt
 ENV PIP_NO_BUILD_ISOLATION=1
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 WORKDIR /app
 
@@ -11,18 +12,19 @@ WORKDIR /app
 RUN echo "numpy==1.26.4" > /app/constraints.txt && \
     echo "huggingface-hub==0.23.5" >> /app/constraints.txt
 
-# Install system packages AND upgrade libstdc++
+# Install system packages AND gcc-11 for newer libstdc++
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
     libsndfile1 \
     sox \
     git \
-    software-properties-common \
-    && add-apt-repository ppa:ubuntu-toolchain-r/test \
-    && apt-get update \
-    && apt-get install -y --only-upgrade libstdc++6 \
+    gcc-11 \
+    g++-11 \
     && rm -rf /var/lib/apt/lists/*
+
+# Symlink the newer libstdc++ from gcc-11
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/conda/lib/libstdc++.so.6
 
 RUN pip install --upgrade pip wheel
 
