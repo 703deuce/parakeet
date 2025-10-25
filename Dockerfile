@@ -75,10 +75,9 @@ RUN pip install --no-deps --no-cache-dir "nemo_toolkit==1.23.0"
 RUN pip install --no-cache-dir "pyannote.audio==3.3.2"
 RUN pip install --no-cache-dir "runpod==1.5.0"
 
-# CRITICAL FIX: Force correct versions AFTER everything else
-RUN pip install --force-reinstall --no-deps "numpy==1.26.4"
-RUN pip install --force-reinstall --no-deps "huggingface-hub==0.24.7"
-RUN pip install --force-reinstall --no-deps "numba==0.60.0"
+# CRITICAL FIX: Uninstall and reinstall with correct versions
+RUN pip uninstall -y numpy huggingface-hub numba
+RUN pip install --no-cache-dir "numpy==1.26.4" "huggingface-hub==0.24.7" "numba==0.60.0"
 
 # Copy the handler script
 COPY handler.py .
