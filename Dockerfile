@@ -15,27 +15,37 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Install core dependencies (keep base image PyTorch 2.2.0)
-RUN pip install "cuda-python>=12.3"
-RUN pip install numpy soundfile librosa
-RUN pip install hydra-core omegaconf pyyaml
-RUN pip install lhotse
-RUN pip install tqdm requests transformers
-RUN pip install sentencepiece scikit-learn pandas joblib
-RUN pip install matplotlib soxr resampy jiwer
-RUN pip install pooch numba llvmlite platformdirs future lazy_loader
-
-# Install NeMo toolkit (this might upgrade torchvision)
-RUN pip install "nemo_toolkit[asr]"
-
-# CRITICAL FIX: Pin to pyannote 3.x (what you had on Sept 12)
-RUN pip install "pyannote.audio>=3.0,<4.0"
-
-# Install other packages
-RUN pip install pydub runpod>=1.5.0
-
-# CRITICAL FIX: Force reinstall compatible torchvision AFTER everything else
-RUN pip install --force-reinstall --no-deps torchvision==0.17.0
+# Install ALL packages with exact versions from Sept 12, 2024
+RUN pip install --no-cache-dir \
+    "cuda-python==12.6.0" \
+    "numpy==1.26.4" \
+    "soundfile==0.12.1" \
+    "librosa==0.10.2.post1" \
+    "hydra-core==1.3.2" \
+    "omegaconf==2.3.0" \
+    "pyyaml==6.0.2" \
+    "lhotse==1.24.2" \
+    "tqdm==4.66.5" \
+    "requests==2.32.3" \
+    "transformers==4.44.2" \
+    "sentencepiece==0.2.0" \
+    "scikit-learn==1.5.2" \
+    "pandas==2.2.3" \
+    "joblib==1.4.2" \
+    "matplotlib==3.9.2" \
+    "soxr==0.4.0" \
+    "resampy==0.4.3" \
+    "jiwer==3.0.4" \
+    "pooch==1.8.2" \
+    "numba==0.60.0" \
+    "llvmlite==0.43.0" \
+    "platformdirs==4.3.6" \
+    "future==1.0.0" \
+    "lazy_loader==0.4" \
+    "pydub==0.25.1" \
+    "nemo_toolkit[asr]==1.23.0" \
+    "pyannote.audio==3.3.2" \
+    "runpod==1.5.0"
 
 # Copy the handler script
 COPY handler.py .
