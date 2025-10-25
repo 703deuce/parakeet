@@ -15,9 +15,6 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# FIX: Install compatible torchvision for PyTorch 2.2.0
-RUN pip install torchvision==0.17.0 torchaudio==2.2.0
-
 # Install core dependencies (keep base image PyTorch 2.2.0)
 RUN pip install "cuda-python>=12.3"
 RUN pip install numpy soundfile librosa
@@ -27,10 +24,18 @@ RUN pip install tqdm requests transformers
 RUN pip install sentencepiece scikit-learn pandas joblib
 RUN pip install matplotlib soxr resampy jiwer
 RUN pip install pooch numba llvmlite platformdirs future lazy_loader
+
+# Install NeMo toolkit (this might upgrade torchvision)
 RUN pip install "nemo_toolkit[asr]"
+
+# Install pyannote (this might also upgrade torchvision)
 RUN pip install pyannote.audio
-RUN pip install pydub
-RUN pip install runpod>=1.5.0
+
+# Install other packages
+RUN pip install pydub runpod>=1.5.0
+
+# CRITICAL FIX: Force reinstall compatible torchvision AFTER everything else
+RUN pip install --force-reinstall --no-deps torchvision==0.17.0
 
 # Copy the handler script
 COPY handler.py .
