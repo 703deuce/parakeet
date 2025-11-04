@@ -10,6 +10,73 @@ if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
+# CRITICAL: Monkey-patch pyannote's reproducibility module BEFORE importing pyannote
+# This prevents pyannote from disabling TF32 during pipeline execution
+# pyannote disables TF32 in its reproducibility.py module when the pipeline is called
+def _patch_pyannote_reproducibility():
+    """Patch pyannote's reproducibility module to preserve TF32"""
+    try:
+        import sys
+        import warnings
+        
+        # Store original warn function
+        _original_warn = warnings.warn
+        
+        # Create a custom warn function that filters out TF32 disable warnings
+        def _filtered_warn(message, *args, **kwargs):
+            if 'TensorFloat-32' in str(message) or 'TF32' in str(message):
+                # Silently ignore TF32 warnings - we want TF32 enabled!
+                return
+            _original_warn(message, *args, **kwargs)
+        
+        # Patch warnings.warn temporarily while importing pyannote
+        warnings.warn = _filtered_warn
+        
+        # Try to import and patch pyannote's reproducibility module
+        try:
+            import pyannote.audio.utils.reproducibility as pyannote_reproducibility
+            # Store original function if it exists
+            if hasattr(pyannote_reproducibility, 'reproducible'):
+                original_reproducible = pyannote_reproducibility.reproducible
+                
+                # Create a patched version that doesn't disable TF32
+                def patched_reproducible(func):
+                    """Patched reproducible decorator that preserves TF32"""
+                    # Call original to get the wrapped function
+                    wrapped = original_reproducible(func)
+                    
+                    # Create a wrapper that re-enables TF32 after calling
+                    def tf32_preserving_wrapper(*args, **kwargs):
+                        # Ensure TF32 is enabled before call
+                        if torch.cuda.is_available():
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
+                        # Call the wrapped function
+                        result = wrapped(*args, **kwargs)
+                        # Re-enable TF32 after call (in case it was disabled)
+                        if torch.cuda.is_available():
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
+                        return result
+                    
+                    return tf32_preserving_wrapper
+                
+                # Replace the reproducible function
+                pyannote_reproducibility.reproducible = patched_reproducible
+        except (ImportError, AttributeError):
+            # If we can't patch it, that's okay - we'll handle it elsewhere
+            pass
+        finally:
+            # Restore original warn
+            warnings.warn = _original_warn
+            
+    except Exception as e:
+        # If patching fails, log but don't fail
+        pass
+
+# Call the patch function before importing pyannote
+_patch_pyannote_reproducibility()
+
 import numpy as np
 import base64
 import io
@@ -661,20 +728,90 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         segments = []
         
         try:
+            # CRITICAL: Patch pyannote's reproducibility module to prevent TF32 disabling
+            # This must be done right before calling the pipeline
+            try:
+                import pyannote.audio.utils.reproducibility as pyannote_reproducibility
+                # Store the original _disable_tf32 function if it exists
+                if hasattr(pyannote_reproducibility, '_disable_tf32'):
+                    # Replace it with a no-op function
+                    pyannote_reproducibility._disable_tf32 = lambda: None
+                # Also patch the reproducible decorator's behavior
+                if hasattr(pyannote_reproducibility, 'reproducible'):
+                    original_reproducible = pyannote_reproducibility.reproducible
+                    def patched_reproducible(func):
+                        wrapped = original_reproducible(func)
+                        def tf32_wrapper(*args, **kwargs):
+                            # Ensure TF32 is enabled before and after
+                            if torch.cuda.is_available():
+                                torch.backends.cuda.matmul.allow_tf32 = True
+                                torch.backends.cudnn.allow_tf32 = True
+                            result = wrapped(*args, **kwargs)
+                            if torch.cuda.is_available():
+                                torch.backends.cuda.matmul.allow_tf32 = True
+                                torch.backends.cudnn.allow_tf32 = True
+                            return result
+                        return tf32_wrapper
+                    pyannote_reproducibility.reproducible = patched_reproducible
+            except (ImportError, AttributeError):
+                pass
+            
             # CRITICAL: Re-enable TF32 right before running diarization
             # pyannote may disable it again during pipeline execution, so we ensure it's enabled
             if torch.cuda.is_available():
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
+            # Create a wrapper function that keeps TF32 enabled during execution using a background thread
+            def run_diarization_with_tf32():
+                """Run diarization while continuously re-enabling TF32 in background"""
+                import threading
+                import time
+                
+                # Flag to stop the TF32 re-enable thread
+                stop_flag = threading.Event()
+                
+                # Background thread that continuously re-enables TF32
+                def keep_tf32_enabled():
+                    while not stop_flag.is_set():
+                        if torch.cuda.is_available():
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
+                        time.sleep(0.01)  # Check every 10ms
+                
+                # Start the background thread
+                tf32_thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
+                tf32_thread.start()
+                
+                try:
+                    # Run the diarization
+                    if pipeline_params:
+                        result = diarization_model(mono_audio_path, **pipeline_params)
+                    else:
+                        result = diarization_model(mono_audio_path)
+                    return result
+                finally:
+                    # Stop the background thread
+                    stop_flag.set()
+                    # Final re-enable
+                    if torch.cuda.is_available():
+                        torch.backends.cuda.matmul.allow_tf32 = True
+                        torch.backends.cudnn.allow_tf32 = True
+            
             # Run pyannote diarization with adjusted parameters
             logger.info("Running pyannote diarization pipeline...")
             if pipeline_params:
                 # Apply the custom parameters
                 logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
-                diarization = diarization_model(mono_audio_path, **pipeline_params)
+                diarization = run_diarization_with_tf32()
             else:
-                diarization = diarization_model(mono_audio_path)
+                diarization = run_diarization_with_tf32()
+            
+            # Re-enable TF32 immediately after pipeline call (in case pyannote disabled it)
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                logger.info("✅ TF32 re-enabled after diarization pipeline execution")
             
             # Convert pyannote output to our format with speaker embeddings
             speaker_embeddings = {}  # Store embeddings per speaker
@@ -750,12 +887,33 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     }
                 }
                 
-                # Re-enable TF32 before fallback diarization
-                if torch.cuda.is_available():
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
+                # Use the same TF32-preserving wrapper for fallback
+                def run_fallback_with_tf32():
+                    """Run fallback diarization while continuously re-enabling TF32"""
+                    import threading
+                    import time
+                    
+                    stop_flag = threading.Event()
+                    
+                    def keep_tf32_enabled():
+                        while not stop_flag.is_set():
+                            if torch.cuda.is_available():
+                                torch.backends.cuda.matmul.allow_tf32 = True
+                                torch.backends.cudnn.allow_tf32 = True
+                            time.sleep(0.01)
+                    
+                    tf32_thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
+                    tf32_thread.start()
+                    
+                    try:
+                        return diarization_model(audio_path, **fallback_params)
+                    finally:
+                        stop_flag.set()
+                        if torch.cuda.is_available():
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
                 
-                diarization_fallback = diarization_model(audio_path, **fallback_params)
+                diarization_fallback = run_fallback_with_tf32()
                 segments = []
                 for turn, _, speaker in diarization_fallback.itertracks(yield_label=True):
                     segments.append({
