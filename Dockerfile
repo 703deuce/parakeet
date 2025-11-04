@@ -42,6 +42,9 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 # Install pyannote and runpod
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
+# Install onnxruntime-gpu for pyannote 3.0 (required for ONNX-based embeddings)
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.16.3"
+
 # Create models directory for baked-in models
 RUN mkdir -p /app/models
 
