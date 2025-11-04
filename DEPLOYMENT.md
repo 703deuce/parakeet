@@ -25,7 +25,7 @@
 2. Create a token with **read** access
 3. Accept model terms at:
    - https://hf.co/pyannote/segmentation-3.0
-   - https://hf.co/pyannote/speaker-diarization-3.1
+   - https://hf.co/pyannote/speaker-diarization-3.0
 
 ### Step 2: Set Build Argument in RunPod
 

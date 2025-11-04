@@ -57,14 +57,14 @@ ENV HF_TOKEN=${HF_TOKEN}
 
 # Download pyannote speaker diarization model during build
 # Note: This requires HF_TOKEN build arg and user must have accepted model terms
-# at https://hf.co/pyannote/segmentation-3.0 and https://hf.co/pyannote/speaker-diarization-3.1
+# at https://hf.co/pyannote/segmentation-3.0 and https://hf.co/pyannote/speaker-diarization-3.0
 RUN if [ -n "$HF_TOKEN" ]; then \
         python3 -c "\
 from pyannote.audio import Pipeline; \
 import os; \
-os.makedirs('/app/models/pyannote-speaker-diarization-3.1', exist_ok=True); \
-print('Downloading pyannote speaker-diarization-3.1 model...'); \
-pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth_token='$HF_TOKEN', cache_dir='/app/models'); \
+os.makedirs('/app/models/pyannote-speaker-diarization-3.0', exist_ok=True); \
+print('Downloading pyannote speaker-diarization-3.0 model...'); \
+pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization-3.0', use_auth_token='$HF_TOKEN', cache_dir='/app/models'); \
 print('✅ Pyannote model baked into image'); \
 "; \
     else \

@@ -517,12 +517,12 @@ def load_diarization_model(hf_token=None):
         
         # Check baked-in models first (from Docker image), then runtime cache
         baked_models_dir = "/app/models"
-        baked_pyannote_dir = os.path.join(baked_models_dir, "pyannote-speaker-diarization-3.1")
+        baked_pyannote_dir = os.path.join(baked_models_dir, "pyannote-speaker-diarization-3.0")
         baked_config_path = os.path.join(baked_pyannote_dir, "config.yaml")
         
         # Set up runtime cache directory for persistent storage (if not using baked-in)
         cache_dir = "/runpod-volume/cache"
-        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.1")
+        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.0")
         
         # Create cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
@@ -627,7 +627,7 @@ def load_diarization_model(hf_token=None):
                     return False
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1", 
+                    "pyannote/speaker-diarization-3.0", 
                     use_auth_token=hf_token,
                     cache_dir=pyannote_cache_dir
                 )
@@ -639,14 +639,14 @@ def load_diarization_model(hf_token=None):
                 logger.info("Using provided HuggingFace token for pyannote access")
                 logger.info("IMPORTANT: Make sure you have accepted user conditions at:")
                 logger.info("  - https://hf.co/pyannote/segmentation-3.0")
-                logger.info("  - https://hf.co/pyannote/speaker-diarization-3.1")
+                logger.info("  - https://hf.co/pyannote/speaker-diarization-3.0")
                 
                 # Set environment variables for caching
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
                 os.environ['HF_HOME'] = pyannote_cache_dir
                 
                 diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1", 
+                    "pyannote/speaker-diarization-3.0", 
                     use_auth_token=hf_token,
                     cache_dir=pyannote_cache_dir
                 )
@@ -726,7 +726,7 @@ def load_diarization_model(hf_token=None):
         logger.error(f"Error loading pyannote diarization pipeline: {str(e)}")
         logger.error("Make sure you have:")
         logger.error("1. Accepted pyannote/segmentation-3.0 user conditions")
-        logger.error("2. Accepted pyannote/speaker-diarization-3.1 user conditions") 
+        logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions") 
         logger.error("3. Created a valid HuggingFace access token")
         return False
 
@@ -2066,7 +2066,7 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
                 'segments_processed': len(diarized_results),
                 'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                 'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                'diarization_model': 'pyannote/speaker-diarization-3.1',
+                'diarization_model': 'pyannote/speaker-diarization-3.0',
                 'processing_method': 'firebase_single_file_diarization',
                 'chunking_method': 'none_firebase_download',
                 'streaming_config': None,
@@ -2192,7 +2192,7 @@ def process_audio_with_diarization(audio_file_path: str, include_timestamps: boo
                 'word_timestamps': word_timestamps,
                 'audio_duration_seconds': transcription_result.get('audio_duration_seconds', 0),
                 'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                'diarization_model': 'pyannote/speaker-diarization-3.1',
+                'diarization_model': 'pyannote/speaker-diarization-3.0',
                 'processing_method': 'direct_firebase_diarization'
             }
         else:
@@ -2431,7 +2431,7 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                     'segments_processed': len(diarized_results),
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                     'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                    'diarization_model': 'pyannote/speaker-diarization-3.1',
+                    'diarization_model': 'pyannote/speaker-diarization-3.0',
                     'processing_method': 'firebase_url_diarization',
                     'chunking_method': 'none_direct_download',
                     'long_audio_optimization': 'local_attention_enabled'
