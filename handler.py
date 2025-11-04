@@ -110,6 +110,7 @@ from typing import Dict, Any, List, Tuple
 import logging
 import uuid
 import time
+import threading
 from datetime import datetime
 
 # Set up logging
@@ -122,6 +123,44 @@ speaker_embedding_classifier = None
 # Global model variables
 model = None
 diarization_model = None
+
+class TF32KeepAlive:
+    """
+    Context manager that aggressively keeps TF32 enabled.
+    Runs a background thread that re-enables TF32 every 10ms.
+    This prevents pyannote from disabling TF32 during pipeline execution.
+    """
+    def __init__(self):
+        self.stop_flag = threading.Event()
+        self.thread = None
+    
+    def __enter__(self):
+        """Start background thread to keep TF32 alive"""
+        self.stop_flag.clear()
+        
+        def keep_tf32_enabled():
+            while not self.stop_flag.is_set():
+                if torch.cuda.is_available():
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                time.sleep(0.01)  # Check every 10ms
+        
+        self.thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
+        self.thread.start()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop background thread"""
+        self.stop_flag.set()
+        if self.thread:
+            self.thread.join(timeout=1)
+        
+        # Ensure TF32 is still enabled at the end
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        
+        return False
 
 def clear_gpu_memory():
     """Clear GPU memory and run garbage collection"""
@@ -888,11 +927,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
-            # Create a wrapper function that keeps TF32 enabled during execution using a background thread
+            # Create a wrapper function that keeps TF32 enabled during execution using TF32KeepAlive
             def run_diarization_with_tf32():
-                """Run diarization while continuously re-enabling TF32 in background and ensuring GPU usage"""
-                import threading
-                import time
+                """Run diarization with TF32 forcefully kept alive using context manager"""
                 
                 # Ensure all models are on GPU before running
                 if torch.cuda.is_available():
@@ -917,50 +954,37 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                         pass  # If we can't set eval mode, continue anyway
                     # Disable gradients for faster inference
                     torch.set_grad_enabled(False)
+                    
+                    # Enable optimizations
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    torch.backends.cudnn.benchmark = True
+                    
                     # Log GPU memory before inference
                     gpu_mem_before = torch.cuda.memory_allocated() / 1e9
                     logger.info(f"📊 GPU memory before diarization: {gpu_mem_before:.2f}GB")
                 
-                # Flag to stop the TF32 re-enable thread
-                stop_flag = threading.Event()
+                logger.info("Running pyannote diarization pipeline...")
                 
-                # Background thread that continuously re-enables TF32
-                def keep_tf32_enabled():
-                    while not stop_flag.is_set():
-                        if torch.cuda.is_available():
-                            torch.backends.cuda.matmul.allow_tf32 = True
-                            torch.backends.cudnn.allow_tf32 = True
-                        time.sleep(0.01)  # Check every 10ms
-                
-                # Start the background thread
-                tf32_thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
-                tf32_thread.start()
-                
-                try:
+                # Use TF32KeepAlive context manager to keep TF32 enabled throughout execution
+                # This prevents pyannote from disabling TF32 during pipeline execution
+                with TF32KeepAlive():
                     # Run the diarization with torch.no_grad() for optimal GPU performance
-                    # This ensures no gradient computation and maximum GPU utilization
                     with torch.no_grad():
                         if pipeline_params:
                             result = diarization_model(mono_audio_path, **pipeline_params)
                         else:
                             result = diarization_model(mono_audio_path)
-                    
-                    # Log GPU memory after inference
-                    if torch.cuda.is_available():
-                        gpu_mem_after = torch.cuda.memory_allocated() / 1e9
-                        logger.info(f"📊 GPU memory after diarization: {gpu_mem_after:.2f}GB")
-                    
-                    return result
-                finally:
-                    # Stop the background thread
-                    stop_flag.set()
-                    # Final re-enable
-                    if torch.cuda.is_available():
-                        torch.backends.cuda.matmul.allow_tf32 = True
-                        torch.backends.cudnn.allow_tf32 = True
+                
+                # Log GPU memory after inference
+                if torch.cuda.is_available():
+                    gpu_mem_after = torch.cuda.memory_allocated() / 1e9
+                    logger.info(f"📊 GPU memory after diarization: {gpu_mem_after:.2f}GB")
+                    logger.info("✅ TF32 kept alive during diarization execution")
+                
+                return result
             
             # Run pyannote diarization with adjusted parameters
-            logger.info("Running pyannote diarization pipeline...")
             if pipeline_params:
                 # Apply the custom parameters
                 logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
@@ -1048,11 +1072,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     }
                 }
                 
-                # Use the same TF32-preserving wrapper for fallback with GPU optimization
+                # Use TF32KeepAlive context manager for fallback
                 def run_fallback_with_tf32():
-                    """Run fallback diarization while continuously re-enabling TF32 and ensuring GPU usage"""
-                    import threading
-                    import time
+                    """Run fallback diarization with TF32 forcefully kept alive"""
                     
                     # Ensure all models are on GPU before running
                     if torch.cuda.is_available():
@@ -1076,28 +1098,17 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                             pass  # If we can't set eval mode, continue anyway
                         # Disable gradients for faster inference
                         torch.set_grad_enabled(False)
+                        
+                        # Enable optimizations
+                        torch.backends.cuda.matmul.allow_tf32 = True
+                        torch.backends.cudnn.allow_tf32 = True
+                        torch.backends.cudnn.benchmark = True
                     
-                    stop_flag = threading.Event()
-                    
-                    def keep_tf32_enabled():
-                        while not stop_flag.is_set():
-                            if torch.cuda.is_available():
-                                torch.backends.cuda.matmul.allow_tf32 = True
-                                torch.backends.cudnn.allow_tf32 = True
-                            time.sleep(0.01)
-                    
-                    tf32_thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
-                    tf32_thread.start()
-                    
-                    try:
+                    # Use TF32KeepAlive context manager to keep TF32 enabled throughout execution
+                    with TF32KeepAlive():
                         # Run with torch.no_grad() for optimal GPU performance
                         with torch.no_grad():
                             return diarization_model(audio_path, **fallback_params)
-                    finally:
-                        stop_flag.set()
-                        if torch.cuda.is_available():
-                            torch.backends.cuda.matmul.allow_tf32 = True
-                            torch.backends.cudnn.allow_tf32 = True
                 
                 diarization_fallback = run_fallback_with_tf32()
                 segments = []
