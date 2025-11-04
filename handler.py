@@ -35,6 +35,18 @@ def _patch_pyannote_reproducibility():
         # Try to import and patch pyannote's reproducibility module
         try:
             import pyannote.audio.utils.reproducibility as pyannote_reproducibility
+            
+            # Patch the module to prevent TF32 disabling and warning
+            # Store original warn if it exists in the module
+            if hasattr(pyannote_reproducibility, 'warnings'):
+                original_module_warn = pyannote_reproducibility.warnings.warn
+                def no_tf32_warn(*args, **kwargs):
+                    # Check if this is a TF32 warning and suppress it
+                    if args and ('TensorFloat-32' in str(args[0]) or 'TF32' in str(args[0])):
+                        return
+                    original_module_warn(*args, **kwargs)
+                pyannote_reproducibility.warnings.warn = no_tf32_warn
+            
             # Store original function if it exists
             if hasattr(pyannote_reproducibility, 'reproducible'):
                 original_reproducible = pyannote_reproducibility.reproducible
@@ -63,6 +75,14 @@ def _patch_pyannote_reproducibility():
                 
                 # Replace the reproducible function
                 pyannote_reproducibility.reproducible = patched_reproducible
+                
+            # Also try to patch the actual disable function if it exists
+            # This is the function that actually disables TF32 and emits the warning
+            import inspect
+            for name, obj in inspect.getmembers(pyannote_reproducibility):
+                if 'disable' in name.lower() and 'tf32' in name.lower() and callable(obj):
+                    # Replace with no-op
+                    setattr(pyannote_reproducibility, name, lambda: None)
         except (ImportError, AttributeError):
             # If we can't patch it, that's okay - we'll handle it elsewhere
             pass
@@ -481,11 +501,49 @@ def load_diarization_model(hf_token=None):
                 # Move to GPU and exit early since we loaded from baked-in model
                 if torch.cuda.is_available():
                     logger.info("🚀 Moving pyannote pipeline to GPU")
-                    diarization_model.to(torch.device("cuda"))
+                    device = torch.device("cuda")
+                    diarization_model.to(device)
+                    
+                    # CRITICAL: Force ALL sub-modules to GPU (pyannote doesn't do this automatically)
+                    logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
+                    for name, module in diarization_model.named_modules():
+                        if hasattr(module, 'to'):
+                            try:
+                                module.to(device)
+                            except Exception:
+                                pass  # Some modules may not support .to()
+                    
+                    # Force specific pyannote internal models to GPU
+                    if hasattr(diarization_model, '_segmentation') and hasattr(diarization_model._segmentation, 'model_'):
+                        try:
+                            diarization_model._segmentation.model_ = diarization_model._segmentation.model_.to(device)
+                        except Exception:
+                            pass
+                    if hasattr(diarization_model, '_embedding') and hasattr(diarization_model._embedding, 'model_'):
+                        try:
+                            diarization_model._embedding.model_ = diarization_model._embedding.model_.to(device)
+                        except Exception:
+                            pass
+                    
+                    # Set pipeline device attribute
+                    if hasattr(diarization_model, 'device'):
+                        diarization_model.device = device
+                    
+                    # Set to evaluation mode and disable gradients for faster inference
+                    diarization_model.eval()
+                    torch.set_grad_enabled(False)
+                    
+                    # Enable PyTorch optimizations
+                    torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
+                    
                     # Re-enable TF32 after moving to GPU
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
+                    
+                    # Verify GPU memory usage
+                    gpu_mem = torch.cuda.memory_allocated() / 1e9
                     logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                    logger.info(f"📊 GPU memory after loading: {gpu_mem:.2f}GB")
                 clear_gpu_memory()
                 logger.info("Pyannote diarization pipeline loaded successfully")
                 return True
@@ -554,14 +612,55 @@ def load_diarization_model(hf_token=None):
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
             logger.info("🚀 Moving pyannote pipeline to GPU")
-            diarization_model.to(torch.device("cuda"))
+            device = torch.device("cuda")
+            diarization_model.to(device)
+            
+            # CRITICAL: Force ALL sub-modules to GPU (pyannote doesn't do this automatically)
+            # This is the key fix - pyannote's .to() doesn't move all internal models
+            logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
+            for name, module in diarization_model.named_modules():
+                if hasattr(module, 'to'):
+                    try:
+                        module.to(device)
+                    except Exception:
+                        pass  # Some modules may not support .to()
+            
+            # Force specific pyannote internal models to GPU
+            # These are the actual neural networks that do the work
+            if hasattr(diarization_model, '_segmentation') and hasattr(diarization_model._segmentation, 'model_'):
+                try:
+                    diarization_model._segmentation.model_ = diarization_model._segmentation.model_.to(device)
+                    logger.info("✅ Segmentation model moved to GPU")
+                except Exception:
+                    pass
+            if hasattr(diarization_model, '_embedding') and hasattr(diarization_model._embedding, 'model_'):
+                try:
+                    diarization_model._embedding.model_ = diarization_model._embedding.model_.to(device)
+                    logger.info("✅ Embedding model moved to GPU")
+                except Exception:
+                    pass
+            
+            # Set pipeline device attribute (pyannote uses this for inference)
+            if hasattr(diarization_model, 'device'):
+                diarization_model.device = device
+            
+            # Set to evaluation mode and disable gradients for faster inference
+            diarization_model.eval()
+            torch.set_grad_enabled(False)
+            
+            # Enable PyTorch optimizations for inference
+            torch.backends.cudnn.benchmark = True  # Auto-tune cuDNN for your GPU
             
             # CRITICAL: Re-enable TF32 after pyannote loads (pyannote disables it for reproducibility)
             # This must be done AFTER Pipeline.from_pretrained() because pyannote's reproducibility
             # module explicitly disables TF32 during initialization
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
+            
+            # Verify GPU memory usage
+            gpu_mem = torch.cuda.memory_allocated() / 1e9
             logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+            logger.info(f"📊 GPU memory after loading: {gpu_mem:.2f}GB")
         else:
             logger.warning("⚠️ CUDA not available, using CPU for diarization")
         
@@ -732,6 +831,19 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             # This must be done right before calling the pipeline
             try:
                 import pyannote.audio.utils.reproducibility as pyannote_reproducibility
+                
+                # Suppress NeMo logger warnings about TF32
+                try:
+                    import nemo.utils.logging as nemo_logging
+                    original_logger_warning = nemo_logging.logger.warning
+                    def filtered_logger_warning(msg, *args, **kwargs):
+                        if 'TensorFloat-32' in str(msg) or 'TF32' in str(msg) or 'ReproducibilityWarning' in str(msg):
+                            return  # Suppress TF32 warnings
+                        original_logger_warning(msg, *args, **kwargs)
+                    nemo_logging.logger.warning = filtered_logger_warning
+                except (ImportError, AttributeError):
+                    pass
+                
                 # Store the original _disable_tf32 function if it exists
                 if hasattr(pyannote_reproducibility, '_disable_tf32'):
                     # Replace it with a no-op function
@@ -764,9 +876,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
             
             # Create a wrapper function that keeps TF32 enabled during execution using a background thread
             def run_diarization_with_tf32():
-                """Run diarization while continuously re-enabling TF32 in background"""
+                """Run diarization while continuously re-enabling TF32 in background and ensuring GPU usage"""
                 import threading
                 import time
+                
+                # Ensure all models are on GPU before running
+                if torch.cuda.is_available():
+                    device = torch.device("cuda")
+                    # Force re-move to GPU (in case anything slipped to CPU)
+                    diarization_model.to(device)
+                    # Re-enable eval mode and disable gradients
+                    diarization_model.eval()
+                    torch.set_grad_enabled(False)
+                    # Log GPU memory before inference
+                    gpu_mem_before = torch.cuda.memory_allocated() / 1e9
+                    logger.info(f"📊 GPU memory before diarization: {gpu_mem_before:.2f}GB")
                 
                 # Flag to stop the TF32 re-enable thread
                 stop_flag = threading.Event()
@@ -784,11 +908,19 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 tf32_thread.start()
                 
                 try:
-                    # Run the diarization
-                    if pipeline_params:
-                        result = diarization_model(mono_audio_path, **pipeline_params)
-                    else:
-                        result = diarization_model(mono_audio_path)
+                    # Run the diarization with torch.no_grad() for optimal GPU performance
+                    # This ensures no gradient computation and maximum GPU utilization
+                    with torch.no_grad():
+                        if pipeline_params:
+                            result = diarization_model(mono_audio_path, **pipeline_params)
+                        else:
+                            result = diarization_model(mono_audio_path)
+                    
+                    # Log GPU memory after inference
+                    if torch.cuda.is_available():
+                        gpu_mem_after = torch.cuda.memory_allocated() / 1e9
+                        logger.info(f"📊 GPU memory after diarization: {gpu_mem_after:.2f}GB")
+                    
                     return result
                 finally:
                     # Stop the background thread
@@ -887,11 +1019,18 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     }
                 }
                 
-                # Use the same TF32-preserving wrapper for fallback
+                # Use the same TF32-preserving wrapper for fallback with GPU optimization
                 def run_fallback_with_tf32():
-                    """Run fallback diarization while continuously re-enabling TF32"""
+                    """Run fallback diarization while continuously re-enabling TF32 and ensuring GPU usage"""
                     import threading
                     import time
+                    
+                    # Ensure all models are on GPU before running
+                    if torch.cuda.is_available():
+                        device = torch.device("cuda")
+                        diarization_model.to(device)
+                        diarization_model.eval()
+                        torch.set_grad_enabled(False)
                     
                     stop_flag = threading.Event()
                     
@@ -906,7 +1045,9 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     tf32_thread.start()
                     
                     try:
-                        return diarization_model(audio_path, **fallback_params)
+                        # Run with torch.no_grad() for optimal GPU performance
+                        with torch.no_grad():
+                            return diarization_model(audio_path, **fallback_params)
                     finally:
                         stop_flag.set()
                         if torch.cuda.is_available():
