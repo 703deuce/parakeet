@@ -2,6 +2,14 @@ import runpod
 import torch
 import torchvision  # CRITICAL: Import before pyannote loads to register torchvision::nms operator
 import torchaudio
+
+# Enable TF32 for faster performance on Ampere+ GPUs (A100, RTX 30/40 series, etc.)
+# TF32 provides 8x speedup over FP32 on A100, 6-7x on RTX 3090, etc.
+# This must be set before any models are loaded to ensure pyannote uses TF32
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
 import numpy as np
 import base64
 import io
@@ -380,6 +388,12 @@ def load_diarization_model(hf_token=None):
         from pyannote.audio import Pipeline
         import torch
         
+        # Ensure TF32 is enabled for pyannote operations (critical for Ampere+ GPUs)
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            logger.info(f"✅ TF32 enabled for pyannote diarization on GPU: {torch.cuda.get_device_name(0)}")
+        
         # Check if model is already cached (simple approach like working old handler)
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
         
@@ -445,6 +459,13 @@ def load_diarization_model(hf_token=None):
         if torch.cuda.is_available():
             logger.info("🚀 Moving pyannote pipeline to GPU")
             diarization_model.to(torch.device("cuda"))
+            
+            # CRITICAL: Re-enable TF32 after pyannote loads (pyannote disables it for reproducibility)
+            # This must be done AFTER Pipeline.from_pretrained() because pyannote's reproducibility
+            # module explicitly disables TF32 during initialization
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
         else:
             logger.warning("⚠️ CUDA not available, using CPU for diarization")
         
@@ -611,6 +632,12 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         segments = []
         
         try:
+            # CRITICAL: Re-enable TF32 right before running diarization
+            # pyannote may disable it again during pipeline execution, so we ensure it's enabled
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            
             # Run pyannote diarization with adjusted parameters
             logger.info("Running pyannote diarization pipeline...")
             if pipeline_params:
@@ -693,6 +720,11 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                         "threshold": 0.4,          # Much lower clustering threshold
                     }
                 }
+                
+                # Re-enable TF32 before fallback diarization
+                if torch.cuda.is_available():
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
                 
                 diarization_fallback = diarization_model(audio_path, **fallback_params)
                 segments = []
