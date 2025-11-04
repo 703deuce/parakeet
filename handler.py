@@ -506,34 +506,37 @@ def load_diarization_model(hf_token=None):
                     
                     logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
                     try:
-                        # CRITICAL: Force segmentation model to GPU
+                        # CRITICAL: Force segmentation model to GPU and set to eval mode
                         if hasattr(diarization_model, '_segmentation'):
                             seg = diarization_model._segmentation
                             if hasattr(seg, 'model_'):
                                 seg.model_ = seg.model_.to(device)
-                                logger.info("✅ Segmentation model moved to GPU")
+                                seg.model_.eval()  # Set to eval mode for inference
+                                logger.info("✅ Segmentation model moved to GPU and set to eval mode")
                             elif hasattr(seg, 'model'):
                                 seg.model = seg.model.to(device)
-                                logger.info("✅ Segmentation model moved to GPU")
+                                seg.model.eval()  # Set to eval mode for inference
+                                logger.info("✅ Segmentation model moved to GPU and set to eval mode")
                         
-                        # CRITICAL: Force embedding model to GPU
+                        # CRITICAL: Force embedding model to GPU and set to eval mode
                         if hasattr(diarization_model, '_embedding'):
                             emb = diarization_model._embedding
                             if hasattr(emb, 'model_'):
                                 emb.model_ = emb.model_.to(device)
-                                logger.info("✅ Embedding model moved to GPU")
+                                emb.model_.eval()  # Set to eval mode for inference
+                                logger.info("✅ Embedding model moved to GPU and set to eval mode")
                             elif hasattr(emb, 'model'):
                                 emb.model = emb.model.to(device)
-                                logger.info("✅ Embedding model moved to GPU")
+                                emb.model.eval()  # Set to eval mode for inference
+                                logger.info("✅ Embedding model moved to GPU and set to eval mode")
                         
                         # Set pipeline device attribute
                         if hasattr(diarization_model, 'device'):
                             diarization_model.device = device
                             logger.info(f"✅ Pipeline device set to: {device}")
                         
-                        # Set to evaluation mode
-                        if hasattr(diarization_model, 'eval'):
-                            diarization_model.eval()
+                        # Pyannote Pipeline doesn't have .eval() - it's always in eval mode
+                        # The sub-models were already set to eval mode above
                         
                         # Disable gradients for faster inference
                         torch.set_grad_enabled(False)
@@ -624,34 +627,37 @@ def load_diarization_model(hf_token=None):
             logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
             
             try:
-                # CRITICAL: Force segmentation model to GPU
+                # CRITICAL: Force segmentation model to GPU and set to eval mode
                 if hasattr(diarization_model, '_segmentation'):
                     seg = diarization_model._segmentation
                     if hasattr(seg, 'model_'):
                         seg.model_ = seg.model_.to(device)
-                        logger.info("✅ Segmentation model moved to GPU")
+                        seg.model_.eval()  # Set to eval mode for inference
+                        logger.info("✅ Segmentation model moved to GPU and set to eval mode")
                     elif hasattr(seg, 'model'):
                         seg.model = seg.model.to(device)
-                        logger.info("✅ Segmentation model moved to GPU")
+                        seg.model.eval()  # Set to eval mode for inference
+                        logger.info("✅ Segmentation model moved to GPU and set to eval mode")
                 
-                # CRITICAL: Force embedding model to GPU
+                # CRITICAL: Force embedding model to GPU and set to eval mode
                 if hasattr(diarization_model, '_embedding'):
                     emb = diarization_model._embedding
                     if hasattr(emb, 'model_'):
                         emb.model_ = emb.model_.to(device)
-                        logger.info("✅ Embedding model moved to GPU")
+                        emb.model_.eval()  # Set to eval mode for inference
+                        logger.info("✅ Embedding model moved to GPU and set to eval mode")
                     elif hasattr(emb, 'model'):
                         emb.model = emb.model.to(device)
-                        logger.info("✅ Embedding model moved to GPU")
+                        emb.model.eval()  # Set to eval mode for inference
+                        logger.info("✅ Embedding model moved to GPU and set to eval mode")
                 
                 # Set pipeline device attribute
                 if hasattr(diarization_model, 'device'):
                     diarization_model.device = device
                     logger.info(f"✅ Pipeline device set to: {device}")
                 
-                # Set to evaluation mode
-                if hasattr(diarization_model, 'eval'):
-                    diarization_model.eval()
+                # Pyannote Pipeline doesn't have .eval() - it's always in eval mode
+                # The sub-models were already set to eval mode above
                 
                 # Disable gradients for faster inference
                 torch.set_grad_enabled(False)
@@ -893,8 +899,23 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     device = torch.device("cuda")
                     # Force re-move to GPU (in case anything slipped to CPU)
                     diarization_model.to(device)
-                    # Re-enable eval mode and disable gradients
-                    diarization_model.eval()
+                    # Re-set sub-models to eval mode (pipeline itself doesn't have .eval())
+                    try:
+                        if hasattr(diarization_model, '_segmentation'):
+                            seg = diarization_model._segmentation
+                            if hasattr(seg, 'model_'):
+                                seg.model_.eval()
+                            elif hasattr(seg, 'model'):
+                                seg.model.eval()
+                        if hasattr(diarization_model, '_embedding'):
+                            emb = diarization_model._embedding
+                            if hasattr(emb, 'model_'):
+                                emb.model_.eval()
+                            elif hasattr(emb, 'model'):
+                                emb.model.eval()
+                    except Exception:
+                        pass  # If we can't set eval mode, continue anyway
+                    # Disable gradients for faster inference
                     torch.set_grad_enabled(False)
                     # Log GPU memory before inference
                     gpu_mem_before = torch.cuda.memory_allocated() / 1e9
@@ -1037,7 +1058,23 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     if torch.cuda.is_available():
                         device = torch.device("cuda")
                         diarization_model.to(device)
-                        diarization_model.eval()
+                        # Re-set sub-models to eval mode (pipeline itself doesn't have .eval())
+                        try:
+                            if hasattr(diarization_model, '_segmentation'):
+                                seg = diarization_model._segmentation
+                                if hasattr(seg, 'model_'):
+                                    seg.model_.eval()
+                                elif hasattr(seg, 'model'):
+                                    seg.model.eval()
+                            if hasattr(diarization_model, '_embedding'):
+                                emb = diarization_model._embedding
+                                if hasattr(emb, 'model_'):
+                                    emb.model_.eval()
+                                elif hasattr(emb, 'model'):
+                                    emb.model.eval()
+                        except Exception:
+                            pass  # If we can't set eval mode, continue anyway
+                        # Disable gradients for faster inference
                         torch.set_grad_enabled(False)
                     
                     stop_flag = threading.Event()
