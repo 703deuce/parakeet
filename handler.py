@@ -504,46 +504,52 @@ def load_diarization_model(hf_token=None):
                     device = torch.device("cuda")
                     diarization_model.to(device)
                     
-                    # CRITICAL: Force ALL sub-modules to GPU (pyannote doesn't do this automatically)
                     logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
-                    for name, module in diarization_model.named_modules():
-                        if hasattr(module, 'to'):
-                            try:
-                                module.to(device)
-                            except Exception:
-                                pass  # Some modules may not support .to()
-                    
-                    # Force specific pyannote internal models to GPU
-                    if hasattr(diarization_model, '_segmentation') and hasattr(diarization_model._segmentation, 'model_'):
-                        try:
-                            diarization_model._segmentation.model_ = diarization_model._segmentation.model_.to(device)
-                        except Exception:
-                            pass
-                    if hasattr(diarization_model, '_embedding') and hasattr(diarization_model._embedding, 'model_'):
-                        try:
-                            diarization_model._embedding.model_ = diarization_model._embedding.model_.to(device)
-                        except Exception:
-                            pass
-                    
-                    # Set pipeline device attribute
-                    if hasattr(diarization_model, 'device'):
-                        diarization_model.device = device
-                    
-                    # Set to evaluation mode and disable gradients for faster inference
-                    diarization_model.eval()
-                    torch.set_grad_enabled(False)
-                    
-                    # Enable PyTorch optimizations
-                    torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
-                    
-                    # Re-enable TF32 after moving to GPU
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
-                    
-                    # Verify GPU memory usage
-                    gpu_mem = torch.cuda.memory_allocated() / 1e9
-                    logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
-                    logger.info(f"📊 GPU memory after loading: {gpu_mem:.2f}GB")
+                    try:
+                        # CRITICAL: Force segmentation model to GPU
+                        if hasattr(diarization_model, '_segmentation'):
+                            seg = diarization_model._segmentation
+                            if hasattr(seg, 'model_'):
+                                seg.model_ = seg.model_.to(device)
+                                logger.info("✅ Segmentation model moved to GPU")
+                            elif hasattr(seg, 'model'):
+                                seg.model = seg.model.to(device)
+                                logger.info("✅ Segmentation model moved to GPU")
+                        
+                        # CRITICAL: Force embedding model to GPU
+                        if hasattr(diarization_model, '_embedding'):
+                            emb = diarization_model._embedding
+                            if hasattr(emb, 'model_'):
+                                emb.model_ = emb.model_.to(device)
+                                logger.info("✅ Embedding model moved to GPU")
+                            elif hasattr(emb, 'model'):
+                                emb.model = emb.model.to(device)
+                                logger.info("✅ Embedding model moved to GPU")
+                        
+                        # Set pipeline device attribute
+                        if hasattr(diarization_model, 'device'):
+                            diarization_model.device = device
+                            logger.info(f"✅ Pipeline device set to: {device}")
+                        
+                        # Set to evaluation mode
+                        if hasattr(diarization_model, 'eval'):
+                            diarization_model.eval()
+                        
+                        # Disable gradients for faster inference
+                        torch.set_grad_enabled(False)
+                        
+                        # Enable PyTorch optimizations
+                        torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
+                        torch.backends.cuda.matmul.allow_tf32 = True
+                        torch.backends.cudnn.allow_tf32 = True
+                        
+                        # Log GPU status
+                        gpu_mem = torch.cuda.memory_allocated() / 1e9
+                        logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                        logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
+                        logger.info("Continuing with basic GPU placement - this may result in CPU usage")
                 clear_gpu_memory()
                 logger.info("Pyannote diarization pipeline loaded successfully")
                 return True
@@ -615,52 +621,54 @@ def load_diarization_model(hf_token=None):
             device = torch.device("cuda")
             diarization_model.to(device)
             
-            # CRITICAL: Force ALL sub-modules to GPU (pyannote doesn't do this automatically)
-            # This is the key fix - pyannote's .to() doesn't move all internal models
             logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
-            for name, module in diarization_model.named_modules():
-                if hasattr(module, 'to'):
-                    try:
-                        module.to(device)
-                    except Exception:
-                        pass  # Some modules may not support .to()
             
-            # Force specific pyannote internal models to GPU
-            # These are the actual neural networks that do the work
-            if hasattr(diarization_model, '_segmentation') and hasattr(diarization_model._segmentation, 'model_'):
-                try:
-                    diarization_model._segmentation.model_ = diarization_model._segmentation.model_.to(device)
-                    logger.info("✅ Segmentation model moved to GPU")
-                except Exception:
-                    pass
-            if hasattr(diarization_model, '_embedding') and hasattr(diarization_model._embedding, 'model_'):
-                try:
-                    diarization_model._embedding.model_ = diarization_model._embedding.model_.to(device)
-                    logger.info("✅ Embedding model moved to GPU")
-                except Exception:
-                    pass
-            
-            # Set pipeline device attribute (pyannote uses this for inference)
-            if hasattr(diarization_model, 'device'):
-                diarization_model.device = device
-            
-            # Set to evaluation mode and disable gradients for faster inference
-            diarization_model.eval()
-            torch.set_grad_enabled(False)
-            
-            # Enable PyTorch optimizations for inference
-            torch.backends.cudnn.benchmark = True  # Auto-tune cuDNN for your GPU
-            
-            # CRITICAL: Re-enable TF32 after pyannote loads (pyannote disables it for reproducibility)
-            # This must be done AFTER Pipeline.from_pretrained() because pyannote's reproducibility
-            # module explicitly disables TF32 during initialization
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-            
-            # Verify GPU memory usage
-            gpu_mem = torch.cuda.memory_allocated() / 1e9
-            logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
-            logger.info(f"📊 GPU memory after loading: {gpu_mem:.2f}GB")
+            try:
+                # CRITICAL: Force segmentation model to GPU
+                if hasattr(diarization_model, '_segmentation'):
+                    seg = diarization_model._segmentation
+                    if hasattr(seg, 'model_'):
+                        seg.model_ = seg.model_.to(device)
+                        logger.info("✅ Segmentation model moved to GPU")
+                    elif hasattr(seg, 'model'):
+                        seg.model = seg.model.to(device)
+                        logger.info("✅ Segmentation model moved to GPU")
+                
+                # CRITICAL: Force embedding model to GPU
+                if hasattr(diarization_model, '_embedding'):
+                    emb = diarization_model._embedding
+                    if hasattr(emb, 'model_'):
+                        emb.model_ = emb.model_.to(device)
+                        logger.info("✅ Embedding model moved to GPU")
+                    elif hasattr(emb, 'model'):
+                        emb.model = emb.model.to(device)
+                        logger.info("✅ Embedding model moved to GPU")
+                
+                # Set pipeline device attribute
+                if hasattr(diarization_model, 'device'):
+                    diarization_model.device = device
+                    logger.info(f"✅ Pipeline device set to: {device}")
+                
+                # Set to evaluation mode
+                if hasattr(diarization_model, 'eval'):
+                    diarization_model.eval()
+                
+                # Disable gradients for faster inference
+                torch.set_grad_enabled(False)
+                
+                # Enable PyTorch optimizations
+                torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                
+                # Log GPU status
+                gpu_mem = torch.cuda.memory_allocated() / 1e9
+                logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
+                logger.info("Continuing with basic GPU placement - this may result in CPU usage")
         else:
             logger.warning("⚠️ CUDA not available, using CPU for diarization")
         
