@@ -10,10 +10,60 @@
    - Choose "Container Image" deployment method
    - Use GitHub integration or build from Dockerfile
 
+## Baking Models into Docker Image (Recommended)
+
+**Benefits:**
+- ✅ Cold start: 30-60 seconds (vs 5-10 minutes downloading models)
+- ✅ Works in ALL regions (no network volume needed)
+- ✅ No model download on startup
+- ✅ Always available
+
+**How to Enable:**
+
+### Step 1: Get HuggingFace Token
+1. Go to https://hf.co/settings/tokens
+2. Create a token with **read** access
+3. Accept model terms at:
+   - https://hf.co/pyannote/segmentation-3.0
+   - https://hf.co/pyannote/speaker-diarization-3.1
+
+### Step 2: Set Build Argument in RunPod
+
+When creating/editing your RunPod endpoint:
+
+1. **If using GitHub integration:**
+   - Go to your endpoint settings
+   - Find "Build Arguments" or "Docker Build Args"
+   - Add: `HF_TOKEN=your_huggingface_token_here`
+   - Save and rebuild
+
+2. **If using Docker Hub:**
+   ```bash
+   docker build --build-arg HF_TOKEN=your_huggingface_token_here -t yourusername/parakeet:v1 .
+   docker push yourusername/parakeet:v1
+   ```
+
+3. **If using RunPod's build system:**
+   - In RunPod dashboard → Endpoints → Edit
+   - Under "Build Settings" → "Build Arguments"
+   - Add: `HF_TOKEN` = `your_huggingface_token_here`
+   - Trigger rebuild
+
+### Step 3: Verify Models Are Baked
+
+After rebuild, check logs on first startup:
+- ✅ Should see: `📦 Loading baked-in pyannote model from Docker image`
+- ✅ Should see: `✅ Baked-in pyannote model loaded successfully (no download needed)`
+- ❌ Should NOT see: `🔄 Downloading pyannote speaker diarization model`
+
+**Note:** If `HF_TOKEN` is not provided, models will download at runtime (slower cold start but still works).
+
 ## Container Configuration
 
 ### Recommended Settings:
-- **Container Disk**: 20GB minimum
+- **Container Disk**: 
+  - **With baked models**: 30GB minimum (models are ~5-10GB)
+  - **Without baked models**: 20GB minimum (models download at runtime)
 - **Memory**: 16GB minimum  
 - **GPU**: RTX 4090, A100, or H100 (16GB+ VRAM)
 - **Max Workers**: 1-5 (based on your needs)
@@ -81,10 +131,13 @@ python test_api.py your_audio.wav --api-endpoint https://api.runpod.ai/v2/YOUR_E
 
 ## Cost Optimization
 
-- **Cold Start**: ~30-60 seconds for first request
+- **Cold Start (with baked models)**: ~30-60 seconds for first request
+- **Cold Start (without baked models)**: ~5-10 minutes (downloading models)
 - **Warm Requests**: ~0.1-2 seconds depending on audio length
 - **Auto-scaling**: Scales to 0 when idle (no cost)
 - **Processing Speed**: ~3380x real-time (very fast)
+
+**💡 Tip:** Bake models into Docker image to reduce cold start from 5-10 minutes to 30-60 seconds!
 
 ## File Structure for GitHub
 

@@ -94,17 +94,20 @@ def load_model():
         # Check CUDA availability
         ensure_cuda_available()
         
-        # Set up cache directory for persistent storage
+        import nemo.collections.asr as nemo_asr
+        
+        # Check baked-in models first (from Docker image), then runtime cache
+        baked_models_dir = "/app/models"
         cache_dir = "/runpod-volume/cache"
         parakeet_cache_dir = os.path.join(cache_dir, "parakeet-tdt-0.6b-v3")
         
-        # Create cache directory if it doesn't exist
+        # Create cache directory if it doesn't exist (for runtime caching)
         os.makedirs(cache_dir, exist_ok=True)
         os.makedirs(parakeet_cache_dir, exist_ok=True)
         
-        import nemo.collections.asr as nemo_asr
-        
-        # Check if model is already cached
+        # NeMo models are cached in default HuggingFace cache, check if baked-in
+        # If models were baked into image, NeMo will find them automatically via HF cache
+        # Otherwise, check runtime cache or download
         cached_model_path = os.path.join(parakeet_cache_dir, "parakeet-tdt-0.6b-v3.nemo")
         
         if os.path.exists(cached_model_path):
@@ -377,14 +380,6 @@ def load_diarization_model(hf_token=None):
         # Clear memory before loading diarization model
         clear_gpu_memory()
         
-        # Set up cache directory for persistent storage
-        cache_dir = "/runpod-volume/cache"
-        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.1")
-        
-        # Create cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
-        os.makedirs(pyannote_cache_dir, exist_ok=True)
-        
         from pyannote.audio import Pipeline
         import torch
         
@@ -394,8 +389,41 @@ def load_diarization_model(hf_token=None):
             torch.backends.cudnn.allow_tf32 = True
             logger.info(f"✅ TF32 enabled for pyannote diarization on GPU: {torch.cuda.get_device_name(0)}")
         
-        # Check if model is already cached (simple approach like working old handler)
+        # Check baked-in models first (from Docker image), then runtime cache
+        baked_models_dir = "/app/models"
+        baked_pyannote_dir = os.path.join(baked_models_dir, "pyannote-speaker-diarization-3.1")
+        baked_config_path = os.path.join(baked_pyannote_dir, "config.yaml")
+        
+        # Set up runtime cache directory for persistent storage (if not using baked-in)
+        cache_dir = "/runpod-volume/cache"
+        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.1")
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(pyannote_cache_dir, exist_ok=True)
+        
+        # Check if model is already cached - prioritize baked-in models
         cached_config_path = os.path.join(pyannote_cache_dir, "config.yaml")
+        
+        # First, check if model was baked into Docker image
+        if os.path.exists(baked_config_path):
+            logger.info(f"📦 Loading baked-in pyannote model from Docker image: {baked_pyannote_dir}")
+            try:
+                diarization_model = Pipeline.from_pretrained(baked_pyannote_dir)
+                logger.info("✅ Baked-in pyannote model loaded successfully (no download needed)")
+                # Move to GPU and exit early since we loaded from baked-in model
+                if torch.cuda.is_available():
+                    logger.info("🚀 Moving pyannote pipeline to GPU")
+                    diarization_model.to(torch.device("cuda"))
+                    # Re-enable TF32 after moving to GPU
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                clear_gpu_memory()
+                logger.info("Pyannote diarization pipeline loaded successfully")
+                return True
+            except Exception as baked_error:
+                logger.warning(f"⚠️ Failed to load baked-in model: {baked_error}, falling back to runtime cache")
         
         # DEBUG: Log cache directory status for debugging
         logger.info(f"🔍 DEBUG: Checking cache directory: {pyannote_cache_dir}")
@@ -410,8 +438,9 @@ def load_diarization_model(hf_token=None):
         else:
             logger.info(f"🔍 DEBUG: Cache directory does not exist at all")
         
+        # Check runtime cache (if baked-in model not found or failed)
         if os.path.exists(cached_config_path):
-            logger.info(f"📦 Loading cached pyannote model directly from disk: {pyannote_cache_dir}")
+            logger.info(f"📦 Loading cached pyannote model from runtime cache: {pyannote_cache_dir}")
             try:
                 # Load directly from local cache directory - no internet or token needed!
                 diarization_model = Pipeline.from_pretrained(pyannote_cache_dir)

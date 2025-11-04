@@ -42,6 +42,44 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 # Install pyannote and runpod
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
+# Create models directory for baked-in models
+RUN mkdir -p /app/models
+
+# Set HuggingFace cache directory (for build-time downloads)
+ENV HF_HOME=/app/models
+ENV TRANSFORMERS_CACHE=/app/models
+ENV HF_DATASETS_CACHE=/app/models
+
+# Accept HuggingFace token as build argument (set in RunPod build settings)
+# This allows downloading pyannote models during build
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
+
+# Download pyannote speaker diarization model during build
+# Note: This requires HF_TOKEN build arg and user must have accepted model terms
+# at https://hf.co/pyannote/segmentation-3.0 and https://hf.co/pyannote/speaker-diarization-3.1
+RUN if [ -n "$HF_TOKEN" ]; then \
+        python3 -c "\
+from pyannote.audio import Pipeline; \
+import os; \
+os.makedirs('/app/models/pyannote-speaker-diarization-3.1', exist_ok=True); \
+print('Downloading pyannote speaker-diarization-3.1 model...'); \
+pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth_token='$HF_TOKEN', cache_dir='/app/models'); \
+print('✅ Pyannote model baked into image'); \
+"; \
+    else \
+        echo "⚠️ HF_TOKEN not provided - skipping pyannote model download (will download at runtime)"; \
+    fi
+
+# Download Parakeet model during build (NeMo caches to default location)
+# This pre-downloads the model so it's available immediately
+RUN python3 -c "\
+import nemo.collections.asr as nemo_asr; \
+print('Downloading Parakeet TDT 0.6B v3 model...'); \
+model = nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v3', map_location='cpu'); \
+print('✅ Parakeet model baked into image'); \
+"
+
 COPY handler.py .
 
 ENV PYTHONPATH=/app
