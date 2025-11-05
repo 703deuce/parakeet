@@ -801,15 +801,34 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         logger.info("Pyannote diarization pipeline loaded successfully")
         return True
     except Exception as e:
-        logger.error(f"Error loading pyannote diarization pipeline: {str(e)}")
-        logger.error("Make sure you have:")
-        if pyannote_version == "2.1":
-            logger.error("1. Accepted pyannote/segmentation user conditions")
-            logger.error("2. Accepted pyannote/speaker-diarization user conditions")
+        error_str = str(e)
+        logger.error(f"Error loading pyannote diarization pipeline: {error_str}")
+        
+        # Check if it's a gated model error
+        if "gated" in error_str.lower() or "access" in error_str.lower() or "token" in error_str.lower():
+            logger.error("🔒 GATED MODEL ERROR: You need to accept user conditions for the required models")
+            logger.error("")
+            if pyannote_version == "2.1":
+                logger.error("For pyannote 2.1, you MUST accept terms at BOTH of these URLs:")
+                logger.error("  1. https://hf.co/pyannote/segmentation")
+                logger.error("  2. https://hf.co/pyannote/speaker-diarization")
+                logger.error("")
+                logger.error("Then make sure your HF token has access to both models.")
+            else:
+                logger.error("For pyannote 3.0, you MUST accept terms at BOTH of these URLs:")
+                logger.error("  1. https://hf.co/pyannote/segmentation-3.0")
+                logger.error("  2. https://hf.co/pyannote/speaker-diarization-3.0")
+                logger.error("")
+                logger.error("Then make sure your HF token has access to both models.")
         else:
-            logger.error("1. Accepted pyannote/segmentation-3.0 user conditions")
-            logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions")
-        logger.error("3. Created a valid HuggingFace access token")
+            logger.error("Make sure you have:")
+            if pyannote_version == "2.1":
+                logger.error("1. Accepted pyannote/segmentation user conditions at: https://hf.co/pyannote/segmentation")
+                logger.error("2. Accepted pyannote/speaker-diarization user conditions at: https://hf.co/pyannote/speaker-diarization")
+            else:
+                logger.error("1. Accepted pyannote/segmentation-3.0 user conditions at: https://hf.co/pyannote/segmentation-3.0")
+                logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions at: https://hf.co/pyannote/speaker-diarization-3.0")
+            logger.error("3. Created a valid HuggingFace access token at: https://hf.co/settings/tokens")
         return False
 
 def extract_speaker_embedding(audio_path: str, start_time: float, end_time: float) -> np.ndarray:
