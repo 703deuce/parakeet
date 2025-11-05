@@ -39,8 +39,8 @@ RUN pip install --no-cache-dir "megatron-core"
 # Install NeMo 2.4+ with ALL its dependencies
 RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 
-# Install pyannote and runpod
-RUN pip install --no-cache-dir "pyannote.audio" "runpod"
+# Install pyannote, onnxruntime (required for pyannote 3.0), and runpod
+RUN pip install --no-cache-dir "pyannote.audio" "onnxruntime-gpu" "runpod"
 
 # Create models directory for baked-in models
 RUN mkdir -p /app/models
