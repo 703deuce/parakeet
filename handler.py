@@ -573,28 +573,40 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
                     try:
                         # CRITICAL: Force segmentation model to GPU and set to eval mode
+                        # Note: pyannote 2.1 and 3.0 may have different structures
                         if hasattr(diarization_model, '_segmentation'):
                             seg = diarization_model._segmentation
-                            if hasattr(seg, 'model_'):
+                            if hasattr(seg, 'model_') and seg.model_ is not None:
                                 seg.model_ = seg.model_.to(device)
-                                seg.model_.eval()  # Set to eval mode for inference
+                                if hasattr(seg.model_, 'eval'):
+                                    seg.model_.eval()  # Set to eval mode for inference
                                 logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                            elif hasattr(seg, 'model'):
+                            elif hasattr(seg, 'model') and seg.model is not None:
                                 seg.model = seg.model.to(device)
-                                seg.model.eval()  # Set to eval mode for inference
+                                if hasattr(seg.model, 'eval'):
+                                    seg.model.eval()  # Set to eval mode for inference
                                 logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                            else:
+                                logger.info("ℹ️ Segmentation model structure differs for this pyannote version - using basic GPU placement")
                         
                         # CRITICAL: Force embedding model to GPU and set to eval mode
+                        # Note: pyannote 2.1 may not have _embedding in the same way as 3.0
                         if hasattr(diarization_model, '_embedding'):
                             emb = diarization_model._embedding
-                            if hasattr(emb, 'model_'):
+                            if hasattr(emb, 'model_') and emb.model_ is not None:
                                 emb.model_ = emb.model_.to(device)
-                                emb.model_.eval()  # Set to eval mode for inference
+                                if hasattr(emb.model_, 'eval'):
+                                    emb.model_.eval()  # Set to eval mode for inference
                                 logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                            elif hasattr(emb, 'model'):
+                            elif hasattr(emb, 'model') and emb.model is not None:
                                 emb.model = emb.model.to(device)
-                                emb.model.eval()  # Set to eval mode for inference
+                                if hasattr(emb.model, 'eval'):
+                                    emb.model.eval()  # Set to eval mode for inference
                                 logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                            else:
+                                logger.info("ℹ️ Embedding model structure differs for this pyannote version - using basic GPU placement")
+                        else:
+                            logger.info("ℹ️ No _embedding attribute found (pyannote 2.1 may use different structure) - using basic GPU placement")
                         
                         # Set pipeline device attribute
                         if hasattr(diarization_model, 'device'):
@@ -698,28 +710,40 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
             
             try:
                 # CRITICAL: Force segmentation model to GPU and set to eval mode
+                # Note: pyannote 2.1 and 3.0 may have different structures
                 if hasattr(diarization_model, '_segmentation'):
                     seg = diarization_model._segmentation
-                    if hasattr(seg, 'model_'):
+                    if hasattr(seg, 'model_') and seg.model_ is not None:
                         seg.model_ = seg.model_.to(device)
-                        seg.model_.eval()  # Set to eval mode for inference
+                        if hasattr(seg.model_, 'eval'):
+                            seg.model_.eval()  # Set to eval mode for inference
                         logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                    elif hasattr(seg, 'model'):
+                    elif hasattr(seg, 'model') and seg.model is not None:
                         seg.model = seg.model.to(device)
-                        seg.model.eval()  # Set to eval mode for inference
+                        if hasattr(seg.model, 'eval'):
+                            seg.model.eval()  # Set to eval mode for inference
                         logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                    else:
+                        logger.info("ℹ️ Segmentation model structure differs for this pyannote version - using basic GPU placement")
                 
                 # CRITICAL: Force embedding model to GPU and set to eval mode
+                # Note: pyannote 2.1 may not have _embedding in the same way as 3.0
                 if hasattr(diarization_model, '_embedding'):
                     emb = diarization_model._embedding
-                    if hasattr(emb, 'model_'):
+                    if hasattr(emb, 'model_') and emb.model_ is not None:
                         emb.model_ = emb.model_.to(device)
-                        emb.model_.eval()  # Set to eval mode for inference
+                        if hasattr(emb.model_, 'eval'):
+                            emb.model_.eval()  # Set to eval mode for inference
                         logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                    elif hasattr(emb, 'model'):
+                    elif hasattr(emb, 'model') and emb.model is not None:
                         emb.model = emb.model.to(device)
-                        emb.model.eval()  # Set to eval mode for inference
+                        if hasattr(emb.model, 'eval'):
+                            emb.model.eval()  # Set to eval mode for inference
                         logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                    else:
+                        logger.info("ℹ️ Embedding model structure differs for this pyannote version - using basic GPU placement")
+                else:
+                    logger.info("ℹ️ No _embedding attribute found (pyannote 2.1 may use different structure) - using basic GPU placement")
                 
                 # Set pipeline device attribute
                 if hasattr(diarization_model, 'device'):
@@ -756,8 +780,12 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
     except Exception as e:
         logger.error(f"Error loading pyannote diarization pipeline: {str(e)}")
         logger.error("Make sure you have:")
-        logger.error("1. Accepted pyannote/segmentation-3.0 user conditions")
-        logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions") 
+        if pyannote_version == "2.1":
+            logger.error("1. Accepted pyannote/segmentation user conditions")
+            logger.error("2. Accepted pyannote/speaker-diarization user conditions")
+        else:
+            logger.error("1. Accepted pyannote/segmentation-3.0 user conditions")
+            logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions")
         logger.error("3. Created a valid HuggingFace access token")
         return False
 
