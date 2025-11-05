@@ -900,7 +900,10 @@ def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
         logger.warning(f"Could not analyze audio quality: {e}")
         return {'duration': 0, 'likely_has_speech': True, 'is_too_quiet': False, 'is_too_short': False}
 
-def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> List[Dict[str, Any]]:
+def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
+                                min_speakers: int = None, max_speakers: int = None,
+                                segmentation_params: Dict[str, Any] = None,
+                                clustering_params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
     Perform speaker diarization on audio file using pyannote.audio
     Returns list of segments with speaker labels and timestamps
@@ -949,11 +952,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         if audio_analysis.get('is_too_short', False):
             logger.warning("⚠️ Audio is very short (<2s) - diarization may be unreliable")
         
-        # Adjust diarization parameters based on audio characteristics
+        # Build diarization parameters from user-provided settings
         pipeline_params = {}
         
-        # For short audio, use more lenient thresholds
-        if audio_analysis.get('duration', 0) < 10:
+        # Add user-provided segmentation parameters
+        if segmentation_params:
+            pipeline_params["segmentation"] = segmentation_params
+            logger.info(f"📊 Using custom segmentation parameters: {segmentation_params}")
+        
+        # Add user-provided clustering parameters
+        if clustering_params:
+            pipeline_params["clustering"] = clustering_params
+            logger.info(f"📊 Using custom clustering parameters: {clustering_params}")
+        
+        # For short audio, use more lenient thresholds (only if user hasn't provided custom params)
+        if audio_analysis.get('duration', 0) < 10 and not pipeline_params:
             logger.info("🔧 Using relaxed thresholds for short audio")
             pipeline_params = {
                 "segmentation": {
@@ -1070,6 +1083,25 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
             
+            # Build final pipeline call parameters (outside function so it can be used)
+            call_params = {}
+            
+            # Add speaker count constraints (highest priority - these are direct pipeline params)
+            if num_speakers is not None:
+                call_params['num_speakers'] = num_speakers
+                logger.info(f"📊 Using num_speakers: {num_speakers}")
+            else:
+                if min_speakers is not None:
+                    call_params['min_speakers'] = min_speakers
+                    logger.info(f"📊 Using min_speakers: {min_speakers}")
+                if max_speakers is not None:
+                    call_params['max_speakers'] = max_speakers
+                    logger.info(f"📊 Using max_speakers: {max_speakers}")
+            
+            # Merge pipeline_params (segmentation/clustering) into call_params
+            if pipeline_params:
+                call_params.update(pipeline_params)
+            
             # Create a wrapper function that keeps TF32 enabled during execution using TF32KeepAlive
             def run_diarization_with_tf32():
                 """Run diarization with TF32 forcefully kept alive using context manager"""
@@ -1136,8 +1168,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 with TF32KeepAlive():
                     # Run the diarization with torch.no_grad() for optimal GPU performance
                     with torch.no_grad():
-                        if pipeline_params:
-                            result = diarization_model(mono_audio_path, **pipeline_params)
+                        if call_params:
+                            result = diarization_model(mono_audio_path, **call_params)
                         else:
                             result = diarization_model(mono_audio_path)
                 
@@ -1153,13 +1185,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 
                 return result
             
-            # Run pyannote diarization with adjusted parameters
-            if pipeline_params:
-                # Apply the custom parameters
-                logger.info(f"🔧 Applying custom diarization parameters: {pipeline_params}")
-                diarization = run_diarization_with_tf32()
-            else:
-                diarization = run_diarization_with_tf32()
+            # Run pyannote diarization with parameters
+            diarization = run_diarization_with_tf32()
             
             # Re-enable TF32 immediately after pipeline call (in case pyannote disabled it)
             if torch.cuda.is_available():
@@ -1594,7 +1621,8 @@ def basic_split_audio(audio_path: str, chunk_duration: int = 300) -> List[Tuple[
             except Exception as cleanup_error:
                 logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
 
-def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = False) -> Dict[str, Any]:
+def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = False, 
+                                 batch_size: int = None, preserve_alignment: bool = None) -> Dict[str, Any]:
     """Transcribe entire audio file directly with Parakeet v3 (NO CHUNKING - processes whole file at once)"""
     try:
         logger.info(f"🎯 Transcribing ENTIRE FILE directly: {audio_path} (timestamps={include_timestamps}) - NO CHUNKING!")
@@ -1658,23 +1686,38 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         logger.info("🚀 Starting Parakeet transcription...")
         
         try:
+            # Build transcription parameters
+            transcribe_params = {}
+            
             if include_timestamps:
-                # Transcribe with NeMo v1.23+ parameters for segment-level timestamps
-                # Use the new approach that passes parameters directly to transcribe()
-                transcribe_params = {
+                transcribe_params.update({
                     'timestamps': True,
                     'return_word_time_offsets': True,
-                    'return_segment_time_offsets': True,  # This should enable segment timestamps
-                    'preserve_alignments': True,
+                    'return_segment_time_offsets': True,
                     'compute_timestamps': True
-                }
-                
-                # Try the new parameter approach first
+                })
+            
+            # Add accuracy settings if provided
+            if batch_size is not None:
+                transcribe_params['batch_size'] = batch_size
+                logger.info(f"📊 Using custom batch_size: {batch_size}")
+            
+            if preserve_alignment is not None:
+                transcribe_params['preserve_alignments'] = preserve_alignment
+                logger.info(f"📊 Using preserve_alignment: {preserve_alignment}")
+            
+            # Transcribe with parameters
+            if transcribe_params:
                 try:
                     output = model.transcribe([mono_audio_path], **transcribe_params)
-                    logger.info("✅ Used NeMo v1.23+ transcribe parameters")
+                    logger.info(f"✅ Used custom transcription parameters: {transcribe_params}")
                 except Exception as param_error:
-                    logger.warning(f"⚠️ New parameters failed: {param_error}, falling back to basic timestamps=True")
+                    logger.warning(f"⚠️ Custom parameters failed: {param_error}, falling back to basic transcription")
+                    if include_timestamps:
+                        output = model.transcribe([mono_audio_path], timestamps=True)
+                    else:
+                        output = model.transcribe([mono_audio_path])
+            elif include_timestamps:
                 output = model.transcribe([mono_audio_path], timestamps=True)
             else:
                 output = model.transcribe([mono_audio_path])
@@ -2402,7 +2445,11 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
 def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use_diarization: bool, 
                            num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                            speaker_threshold: float = 0.35, single_speaker_mode: bool = True,
-                           pyannote_version: str = "2.1") -> dict:
+                           pyannote_version: str = "2.1",
+                           batch_size: int = None, preserve_alignment: bool = None,
+                           min_speakers: int = None, max_speakers: int = None,
+                           segmentation_params: Dict[str, Any] = None,
+                           clustering_params: Dict[str, Any] = None) -> dict:
     """
     Process downloaded audio file with transcription and optional diarization
     This is the main processing function for Firebase URL workflow
@@ -2426,7 +2473,9 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             return process_long_audio_with_chunking(
                 audio_file_path, include_timestamps, use_diarization, 
                 num_speakers, hf_token, audio_format, total_duration,
-                speaker_threshold, single_speaker_mode, pyannote_version
+                speaker_threshold, single_speaker_mode, pyannote_version,
+                batch_size, preserve_alignment, min_speakers, max_speakers,
+                segmentation_params, clustering_params
             )
         
         if use_diarization:
@@ -2440,7 +2489,14 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             
             # Run diarization on the complete audio file (optimized approach)
             logger.info(f"🎤 Running diarization on complete audio file ({total_duration/60:.1f} minutes)...")
-            diarized_segments = perform_speaker_diarization(audio_file_path, num_speakers)
+            diarized_segments = perform_speaker_diarization(
+                audio_file_path, 
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+                segmentation_params=segmentation_params,
+                clustering_params=clustering_params
+            )
             
             if diarized_segments:
                 # Apply speaker consistency merging
@@ -2453,7 +2509,12 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             
             # Run transcription on the complete audio file
             logger.info("📝 Running transcription on complete audio file...")
-            transcription_result = transcribe_audio_file_direct(audio_file_path, include_timestamps=True)
+            transcription_result = transcribe_audio_file_direct(
+                audio_file_path, 
+                include_timestamps=True,
+                batch_size=batch_size,
+                preserve_alignment=preserve_alignment
+            )
             
             # Match timestamps to assign speakers
             logger.info("🔗 Matching timestamps for speaker assignment...")
@@ -3581,7 +3642,11 @@ def transcribe_long_audio(audio_path: str, include_timestamps: bool = True,
 def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: bool, use_diarization: bool,
                                    num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                                    total_duration: float = 0, speaker_threshold: float = 0.35, 
-                                   single_speaker_mode: bool = True, pyannote_version: str = "3.0") -> dict:
+                                   single_speaker_mode: bool = True, pyannote_version: str = "3.0",
+                                   batch_size: int = None, preserve_alignment: bool = None,
+                                   min_speakers: int = None, max_speakers: int = None,
+                                   segmentation_params: Dict[str, Any] = None,
+                                   clustering_params: Dict[str, Any] = None) -> dict:
     """
     Process long audio files (>15 minutes) using chunking with speaker consistency.
     
@@ -3643,7 +3708,14 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         
         # Run diarization on the WHOLE audio file (optimized approach)
         logger.info("🎤 Running speaker diarization on complete audio file...")
-        full_diarization_results = perform_speaker_diarization(audio_file_path, num_speakers)
+        full_diarization_results = perform_speaker_diarization(
+            audio_file_path, 
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+            segmentation_params=segmentation_params,
+            clustering_params=clustering_params
+        )
         
         if not full_diarization_results:
             logger.warning("⚠️ No diarized segments found, returning transcription only")
@@ -3929,6 +4001,16 @@ def handler(job):
                 hf_token = job_input.get("hf_token", None)
                 pyannote_version = job_input.get("pyannote_version", "2.1")  # Default to 2.1 (faster)
                 
+                # Parakeet accuracy settings
+                batch_size = job_input.get("batch_size", None)  # For better accuracy (1 = most accurate)
+                preserve_alignment = job_input.get("preserve_alignment", None)  # For better timing accuracy
+                
+                # Pyannote accuracy settings
+                min_speakers = job_input.get("min_speakers", None)
+                max_speakers = job_input.get("max_speakers", None)
+                segmentation_params = job_input.get("segmentation_params", None)  # Dict with segmentation settings
+                clustering_params = job_input.get("clustering_params", None)  # Dict with clustering settings
+                
                 # Speaker consistency settings
                 speaker_threshold = job_input.get("speaker_threshold", 0.35)
                 single_speaker_mode = job_input.get("single_speaker_mode", True)
@@ -3960,7 +4042,13 @@ def handler(job):
                         audio_format=audio_format,
                         speaker_threshold=speaker_threshold,
                         single_speaker_mode=single_speaker_mode,
-                        pyannote_version=pyannote_version
+                        pyannote_version=pyannote_version,
+                        batch_size=batch_size,
+                        preserve_alignment=preserve_alignment,
+                        min_speakers=min_speakers,
+                        max_speakers=max_speakers,
+                        segmentation_params=segmentation_params,
+                        clustering_params=clustering_params
                     )
                     
                     # Clean up downloaded file
