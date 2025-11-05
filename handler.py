@@ -141,9 +141,10 @@ class TF32KeepAlive:
         def keep_tf32_enabled():
             while not self.stop_flag.is_set():
                 if torch.cuda.is_available():
+                    # Aggressively re-enable TF32 every 1ms
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
-                time.sleep(0.01)  # Check every 10ms
+                time.sleep(0.001)  # Check every 1ms (more aggressive)
         
         self.thread = threading.Thread(target=keep_tf32_enabled, daemon=True)
         self.thread.start()
@@ -497,12 +498,23 @@ def load_speaker_embedding_model():
         logger.error(f"❌ Failed to load SpeechBrain speaker embedding model: {e}")
         return False
 
-def load_diarization_model(hf_token=None):
+def load_diarization_model(hf_token=None, pyannote_version="3.0"):
     """
     Load pyannote.audio diarization pipeline with caching
+    
+    Args:
+        hf_token: HuggingFace token for model access
+        pyannote_version: Version to use - "3.0" (default, faster) or "2.1" (more accurate)
     """
     global diarization_model
     try:
+        # Validate version
+        if pyannote_version not in ["3.0", "2.1"]:
+            logger.warning(f"⚠️ Invalid pyannote version '{pyannote_version}', defaulting to 3.0")
+            pyannote_version = "3.0"
+        
+        logger.info(f"🎯 Loading pyannote speaker-diarization-{pyannote_version}")
+        
         # Clear memory before loading diarization model
         clear_gpu_memory()
         
@@ -515,14 +527,22 @@ def load_diarization_model(hf_token=None):
             torch.backends.cudnn.allow_tf32 = True
             logger.info(f"✅ TF32 enabled for pyannote diarization on GPU: {torch.cuda.get_device_name(0)}")
         
+        # Determine model identifier based on version
+        if pyannote_version == "2.1":
+            model_id = "pyannote/speaker-diarization@2.1"
+            model_dir_name = "pyannote-speaker-diarization-2.1"
+        else:  # 3.0
+            model_id = "pyannote/speaker-diarization-3.0"
+            model_dir_name = "pyannote-speaker-diarization-3.0"
+        
         # Check baked-in models first (from Docker image), then runtime cache
         baked_models_dir = "/app/models"
-        baked_pyannote_dir = os.path.join(baked_models_dir, "pyannote-speaker-diarization-3.0")
+        baked_pyannote_dir = os.path.join(baked_models_dir, model_dir_name)
         baked_config_path = os.path.join(baked_pyannote_dir, "config.yaml")
         
         # Set up runtime cache directory for persistent storage (if not using baked-in)
         cache_dir = "/runpod-volume/cache"
-        pyannote_cache_dir = os.path.join(cache_dir, "pyannote-speaker-diarization-3.0")
+        pyannote_cache_dir = os.path.join(cache_dir, model_dir_name)
         
         # Create cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
@@ -634,7 +654,7 @@ def load_diarization_model(hf_token=None):
                     return False
                 logger.info("🔄 Downloading fresh pyannote model...")
                 diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.0", 
+                    model_id, 
                     use_auth_token=hf_token,
                     cache_dir=pyannote_cache_dir
                 )
@@ -645,19 +665,23 @@ def load_diarization_model(hf_token=None):
             if hf_token:
                 logger.info("Using provided HuggingFace token for pyannote access")
                 logger.info("IMPORTANT: Make sure you have accepted user conditions at:")
-                logger.info("  - https://hf.co/pyannote/segmentation-3.0")
-                logger.info("  - https://hf.co/pyannote/speaker-diarization-3.0")
+                if pyannote_version == "2.1":
+                    logger.info("  - https://hf.co/pyannote/segmentation")
+                    logger.info("  - https://hf.co/pyannote/speaker-diarization")
+                else:  # 3.0
+                    logger.info("  - https://hf.co/pyannote/segmentation-3.0")
+                    logger.info("  - https://hf.co/pyannote/speaker-diarization-3.0")
                 
                 # Set environment variables for caching
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
                 os.environ['HF_HOME'] = pyannote_cache_dir
                 
                 diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.0", 
+                    model_id, 
                     use_auth_token=hf_token,
                     cache_dir=pyannote_cache_dir
                 )
-                logger.info(f"💾 Pyannote model downloaded and cached to: {pyannote_cache_dir}")
+                logger.info(f"💾 Pyannote {pyannote_version} model downloaded and cached to: {pyannote_cache_dir}")
             else:
                 logger.error("HuggingFace token is required for pyannote.audio models")
                 logger.error("Please provide hf_token parameter in your request")
@@ -933,6 +957,23 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 if hasattr(pyannote_reproducibility, '_disable_tf32'):
                     # Replace it with a no-op function
                     pyannote_reproducibility._disable_tf32 = lambda: None
+                
+                # Also patch any function that might disable TF32
+                # Check for common function names that disable TF32
+                for attr_name in dir(pyannote_reproducibility):
+                    if not attr_name.startswith('_'):
+                        attr = getattr(pyannote_reproducibility, attr_name)
+                        if callable(attr):
+                            # Check if it's a function that modifies TF32
+                            try:
+                                import inspect
+                                source = inspect.getsource(attr) if hasattr(inspect, 'getsource') else None
+                                if source and ('allow_tf32' in source or 'TF32' in source or 'disable' in source.lower()):
+                                    # Replace with a function that does nothing
+                                    setattr(pyannote_reproducibility, attr_name, lambda *args, **kwargs: None)
+                                    logger.info(f"🔒 Patched pyannote function: {attr_name}")
+                            except:
+                                pass
                 # Also patch the reproducible decorator's behavior
                 if hasattr(pyannote_reproducibility, 'reproducible'):
                     original_reproducible = pyannote_reproducibility.reproducible
@@ -1009,6 +1050,12 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                         logger.info("⚠️ ONNX Runtime using CPU provider (CUDA not available)")
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check ONNX Runtime status: {e}")
+                
+                # CRITICAL: Force TF32 enabled right before execution (in case pyannote disabled it)
+                if torch.cuda.is_available():
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    logger.info("🔒 TF32 forcefully enabled before diarization execution")
                 
                 # Start timing
                 diarization_start_time = time.time()
@@ -1959,8 +2006,10 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
         if use_diarization:
             # Load diarization model if needed
             if diarization_model is None and hf_token:
-                logger.info("Loading pyannote diarization model for Firebase processing...")
-                if not load_diarization_model(hf_token):
+                # Get pyannote_version from input if available, default to 3.0
+                pyannote_version = job.get("input", {}).get("pyannote_version", "3.0") if "input" in job else "3.0"
+                logger.info(f"Loading pyannote diarization model (version {pyannote_version}) for Firebase processing...")
+                if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                     return {"error": "Failed to load diarization model with provided HF token"}
             elif diarization_model is None:
                 return {"error": "Diarization requested but no HF token provided and model not loaded"}
@@ -2281,7 +2330,8 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
 
 def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use_diarization: bool, 
                            num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
-                           speaker_threshold: float = 0.35, single_speaker_mode: bool = True) -> dict:
+                           speaker_threshold: float = 0.35, single_speaker_mode: bool = True,
+                           pyannote_version: str = "3.0") -> dict:
     """
     Process downloaded audio file with transcription and optional diarization
     This is the main processing function for Firebase URL workflow
@@ -2305,14 +2355,14 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             return process_long_audio_with_chunking(
                 audio_file_path, include_timestamps, use_diarization, 
                 num_speakers, hf_token, audio_format, total_duration,
-                speaker_threshold, single_speaker_mode
+                speaker_threshold, single_speaker_mode, pyannote_version
             )
         
         if use_diarization:
             # Load diarization model if needed
             if diarization_model is None and hf_token:
-                logger.info("🎤 Loading pyannote diarization model...")
-                if not load_diarization_model(hf_token):
+                logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version})...")
+                if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                     return {"error": "Failed to load diarization model with provided HF token"}
             elif diarization_model is None:
                 return {"error": "Diarization requested but no HF token provided"}
@@ -3460,7 +3510,7 @@ def transcribe_long_audio(audio_path: str, include_timestamps: bool = True,
 def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: bool, use_diarization: bool,
                                    num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                                    total_duration: float = 0, speaker_threshold: float = 0.35, 
-                                   single_speaker_mode: bool = True) -> dict:
+                                   single_speaker_mode: bool = True, pyannote_version: str = "3.0") -> dict:
     """
     Process long audio files (>15 minutes) using chunking with speaker consistency.
     
@@ -3483,8 +3533,8 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         
         # Load diarization model if needed
         if use_diarization and diarization_model is None and hf_token:
-            logger.info("🎤 Loading pyannote diarization model for chunked processing...")
-            if not load_diarization_model(hf_token):
+            logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version}) for chunked processing...")
+            if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                 return {"error": "Failed to load diarization model with provided HF token"}
         elif use_diarization and diarization_model is None:
             return {"error": "Diarization requested but no HF token provided"}
@@ -3806,6 +3856,7 @@ def handler(job):
                 use_diarization = job_input.get("use_diarization", True)
                 num_speakers = job_input.get("num_speakers", None)
                 hf_token = job_input.get("hf_token", None)
+                pyannote_version = job_input.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
                 
                 # Speaker consistency settings
                 speaker_threshold = job_input.get("speaker_threshold", 0.35)
@@ -3837,7 +3888,8 @@ def handler(job):
                         hf_token=hf_token,
                         audio_format=audio_format,
                         speaker_threshold=speaker_threshold,
-                        single_speaker_mode=single_speaker_mode
+                        single_speaker_mode=single_speaker_mode,
+                        pyannote_version=pyannote_version
                     )
                     
                     # Clean up downloaded file
@@ -3879,6 +3931,7 @@ def handler(job):
                 use_diarization = job_input.get("use_diarization", True)
                 num_speakers = job_input.get("num_speakers", None)
                 hf_token = job_input.get("hf_token", None)
+                pyannote_version = job_input.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
                 firebase_upload = job_input.get("firebase_upload", False)
                 
                 # Decode base64 audio data
@@ -3901,6 +3954,7 @@ def handler(job):
             use_diarization = job.get("use_diarization", True) 
             num_speakers = job.get("num_speakers", None)
             hf_token = job.get("hf_token", None)
+            pyannote_version = job.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
             firebase_upload = job.get("firebase_upload", False)
             
             # Get raw audio file data
@@ -3998,12 +4052,12 @@ def handler(job):
                 
                 # Load diarization model if needed
                 if use_diarization and hf_token and diarization_model is None:
-                    logger.info("Diarization requested with HF token - loading pyannote model...")
-                    if not load_diarization_model(hf_token):
+                    logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
+                    if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                         return {"error": "Failed to load diarization model with provided HF token"}
                 elif use_diarization and diarization_model is None:
-                    logger.info("Diarization requested - attempting to load pyannote model without token...")
-                    if not load_diarization_model():
+                    logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
+                    if not load_diarization_model(pyannote_version=pyannote_version):
                         return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
                 
                 # Process the audio file directly
@@ -4076,12 +4130,12 @@ def handler(job):
             
             # Load diarization model if needed
             if use_diarization and hf_token and diarization_model is None:
-                logger.info("Diarization requested with HF token - loading pyannote model...")
-                if not load_diarization_model(hf_token):
+                logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
+                if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                     return {"error": "Failed to load diarization model with provided HF token"}
             elif use_diarization and diarization_model is None:
-                logger.info("Diarization requested - attempting to load pyannote model without token...")
-                if not load_diarization_model():
+                logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
+                if not load_diarization_model(pyannote_version=pyannote_version):
                     return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
             
             temp_files_to_cleanup = [temp_audio_file.name]
