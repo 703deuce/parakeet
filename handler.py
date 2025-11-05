@@ -537,6 +537,13 @@ def load_diarization_model(hf_token=None):
             try:
                 diarization_model = Pipeline.from_pretrained(baked_pyannote_dir)
                 logger.info("✅ Baked-in pyannote model loaded successfully (no download needed)")
+                # Verify model version
+                try:
+                    if hasattr(diarization_model, 'model_') and hasattr(diarization_model.model_, 'config'):
+                        logger.info(f"🔍 Pyannote model config: {diarization_model.model_.config}")
+                    logger.info(f"🔍 Pyannote model type: {type(diarization_model).__name__}")
+                except Exception as e:
+                    logger.debug(f"Could not log model config: {e}")
                 # Move to GPU and exit early since we loaded from baked-in model
                 if torch.cuda.is_available():
                     logger.info("🚀 Moving pyannote pipeline to GPU")
@@ -876,6 +883,31 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
         else:
             logger.info("✅ Using original mono audio for diarization")
         
+        # Downsample to 16kHz for 2-3x faster diarization
+        # Check audio sample rate before downsampling
+        try:
+            from pydub import AudioSegment
+            audio_check = AudioSegment.from_file(mono_audio_path)
+            logger.info(f"🔍 Audio sample rate before downsampling: {audio_check.frame_rate}Hz, duration: {len(audio_check)/1000:.1f}s")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check audio sample rate: {e}")
+        
+        downsampled_audio_path = downsample_for_diarization(mono_audio_path)
+        
+        if downsampled_audio_path != mono_audio_path:
+            temp_files_to_cleanup.append(downsampled_audio_path)
+            logger.info(f"📉 Using downsampled audio for diarization: {downsampled_audio_path}")
+            # Use downsampled audio for diarization
+            mono_audio_path = downsampled_audio_path
+            # Verify the downsampled audio
+            try:
+                audio_check = AudioSegment.from_file(mono_audio_path)
+                logger.info(f"✅ Verified downsampled audio: {audio_check.frame_rate}Hz, {audio_check.channels} channels")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not verify downsampled audio: {e}")
+        else:
+            logger.info("✅ Using original sample rate for diarization")
+        
         # Initialize segments list before try block
         segments = []
         
@@ -966,6 +998,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                 
                 logger.info("Running pyannote diarization pipeline...")
                 
+                # Check ONNX Runtime status if available
+                try:
+                    import onnxruntime as ort
+                    available_providers = ort.get_available_providers()
+                    logger.info(f"🔍 ONNX Runtime providers: {available_providers}")
+                    if 'CUDAExecutionProvider' in available_providers:
+                        logger.info("✅ ONNX Runtime CUDA provider available")
+                    else:
+                        logger.info("⚠️ ONNX Runtime using CPU provider (CUDA not available)")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not check ONNX Runtime status: {e}")
+                
+                # Start timing
+                diarization_start_time = time.time()
+                
                 # Use TF32KeepAlive context manager to keep TF32 enabled throughout execution
                 # This prevents pyannote from disabling TF32 during pipeline execution
                 with TF32KeepAlive():
@@ -975,6 +1022,10 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                             result = diarization_model(mono_audio_path, **pipeline_params)
                         else:
                             result = diarization_model(mono_audio_path)
+                
+                # Calculate and log timing
+                diarization_duration = time.time() - diarization_start_time
+                logger.info(f"⏱️ Diarization completed in {diarization_duration:.1f} seconds ({diarization_duration/60:.1f} minutes)")
                 
                 # Log GPU memory after inference
                 if torch.cuda.is_available():
@@ -2528,6 +2579,48 @@ def ensure_mono_audio(audio_path: str) -> str:
             
     except Exception as e:
         logger.warning(f"⚠️ Could not convert audio to mono: {str(e)} - using original file")
+        return audio_path
+
+def downsample_for_diarization(audio_path: str) -> str:
+    """
+    Downsample audio to 16kHz for 2-3x faster diarization.
+    Pyannote works fine with 16kHz audio and this significantly speeds up processing.
+    
+    Args:
+        audio_path: Path to the audio file
+        
+    Returns:
+        Path to downsampled audio file (or original if downsampling fails or already at 16kHz)
+    """
+    try:
+        from pydub import AudioSegment
+        
+        # Load audio
+        audio = AudioSegment.from_file(audio_path)
+        original_rate = audio.frame_rate
+        
+        # If already 16kHz or lower, no need to downsample
+        if original_rate <= 16000:
+            logger.info(f"✅ Audio is already at {original_rate}Hz - no downsampling needed")
+            return audio_path
+        
+        logger.info(f"📉 Downsampling audio from {original_rate}Hz to 16kHz for faster diarization...")
+        
+        # Downsample to 16kHz and ensure mono
+        audio_16k = audio.set_frame_rate(16000).set_channels(1)
+        
+        # Create temporary downsampled file
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.wav')
+        os.close(temp_fd)
+        
+        # Export as WAV for best compatibility with pyannote
+        audio_16k.export(temp_path, format="wav")
+        
+        logger.info(f"✅ Downsampled audio to 16kHz: {temp_path}")
+        return temp_path
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Could not downsample audio: {str(e)} - using original file")
         return audio_path
 
 def split_audio_into_chunks(audio_path: str, chunk_duration: int = 900, overlap_duration: int = 30) -> List[Dict[str, Any]]:
