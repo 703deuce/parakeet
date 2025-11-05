@@ -835,8 +835,18 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
     """
     Extract a speaker embedding using SpeechBrain EncoderClassifier.
     Returns a numpy array or None.
+    
+    Note: Very short segments (< 0.5s) are skipped as they're too short for reliable embedding extraction.
     """
     global speaker_embedding_classifier
+    
+    # Skip embedding extraction for very short segments
+    # SpeechBrain requires minimum duration for proper feature extraction
+    segment_duration = end_time - start_time
+    if segment_duration < 0.5:
+        # Too short for embedding - return None silently (not an error)
+        return None
+    
     if speaker_embedding_classifier is None:
         logger.warning("⚠️ Speaker embedding classifier not loaded; loading now.")
         load_speaker_embedding_model()
@@ -850,6 +860,12 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
         start_sample = int(start_time * sample_rate)
         end_sample = int(end_time * sample_rate)
         segment_waveform = waveform[:, start_sample:end_sample]
+        
+        # Additional check: ensure segment has enough samples
+        min_samples = int(0.5 * sample_rate)  # Minimum 0.5 seconds
+        if segment_waveform.shape[1] < min_samples:
+            return None
+        
         # Ensure mono
         if segment_waveform.shape[0] > 1:
             segment_waveform = segment_waveform.mean(dim=0, keepdim=True)
@@ -860,8 +876,15 @@ def extract_speaker_embedding(audio_path: str, start_time: float, end_time: floa
             embedding_np = embedding.squeeze().cpu().numpy()
             return embedding_np
     except Exception as e:
-        logger.warning(f"⚠️ Speaker embedding extraction via SpeechBrain failed: {str(e)}")
-        return None
+        # Only log if it's not a padding/size error (those are expected for very short segments)
+        error_msg = str(e)
+        if "padding" in error_msg.lower() or "dimension" in error_msg.lower() or "size" in error_msg.lower():
+            # Expected error for short segments - skip silently
+            return None
+        else:
+            # Unexpected error - log as warning
+            logger.warning(f"⚠️ Speaker embedding extraction via SpeechBrain failed: {error_msg}")
+            return None
 
 def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
     """
