@@ -498,20 +498,20 @@ def load_speaker_embedding_model():
         logger.error(f"❌ Failed to load SpeechBrain speaker embedding model: {e}")
         return False
 
-def load_diarization_model(hf_token=None, pyannote_version="3.0"):
+def load_diarization_model(hf_token=None, pyannote_version="2.1"):
     """
     Load pyannote.audio diarization pipeline with caching
     
     Args:
         hf_token: HuggingFace token for model access
-        pyannote_version: Version to use - "3.0" (default, faster) or "2.1" (more accurate)
+        pyannote_version: Version to use - "2.1" (default, faster) or "3.0" (slower, more accurate)
     """
     global diarization_model
     try:
         # Validate version
         if pyannote_version not in ["3.0", "2.1"]:
-            logger.warning(f"⚠️ Invalid pyannote version '{pyannote_version}', defaulting to 3.0")
-            pyannote_version = "3.0"
+            logger.warning(f"⚠️ Invalid pyannote version '{pyannote_version}', defaulting to 2.1")
+            pyannote_version = "2.1"
         
         logger.info(f"🎯 Loading pyannote speaker-diarization-{pyannote_version}")
         
@@ -531,7 +531,7 @@ def load_diarization_model(hf_token=None, pyannote_version="3.0"):
         if pyannote_version == "2.1":
             model_id = "pyannote/speaker-diarization@2.1"
             model_dir_name = "pyannote-speaker-diarization-2.1"
-        else:  # 3.0
+        else:  # 3.0 (slower but more accurate)
             model_id = "pyannote/speaker-diarization-3.0"
             model_dir_name = "pyannote-speaker-diarization-3.0"
         
@@ -2006,8 +2006,8 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
         if use_diarization:
             # Load diarization model if needed
             if diarization_model is None and hf_token:
-                # Get pyannote_version from input if available, default to 3.0
-                pyannote_version = job.get("input", {}).get("pyannote_version", "3.0") if "input" in job else "3.0"
+                # Get pyannote_version from input if available, default to 2.1
+                pyannote_version = job.get("input", {}).get("pyannote_version", "2.1") if "input" in job else "2.1"
                 logger.info(f"Loading pyannote diarization model (version {pyannote_version}) for Firebase processing...")
                 if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                     return {"error": "Failed to load diarization model with provided HF token"}
@@ -2331,7 +2331,7 @@ def transcribe_audio_file(audio_file_path: str, include_timestamps: bool) -> dic
 def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use_diarization: bool, 
                            num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                            speaker_threshold: float = 0.35, single_speaker_mode: bool = True,
-                           pyannote_version: str = "3.0") -> dict:
+                           pyannote_version: str = "2.1") -> dict:
     """
     Process downloaded audio file with transcription and optional diarization
     This is the main processing function for Firebase URL workflow
@@ -3856,7 +3856,7 @@ def handler(job):
                 use_diarization = job_input.get("use_diarization", True)
                 num_speakers = job_input.get("num_speakers", None)
                 hf_token = job_input.get("hf_token", None)
-                pyannote_version = job_input.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
+                pyannote_version = job_input.get("pyannote_version", "2.1")  # Default to 2.1 (faster)
                 
                 # Speaker consistency settings
                 speaker_threshold = job_input.get("speaker_threshold", 0.35)
@@ -3931,7 +3931,7 @@ def handler(job):
                 use_diarization = job_input.get("use_diarization", True)
                 num_speakers = job_input.get("num_speakers", None)
                 hf_token = job_input.get("hf_token", None)
-                pyannote_version = job_input.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
+                pyannote_version = job_input.get("pyannote_version", "2.1")  # Default to 2.1 (faster)
                 firebase_upload = job_input.get("firebase_upload", False)
                 
                 # Decode base64 audio data
@@ -3954,7 +3954,7 @@ def handler(job):
             use_diarization = job.get("use_diarization", True) 
             num_speakers = job.get("num_speakers", None)
             hf_token = job.get("hf_token", None)
-            pyannote_version = job.get("pyannote_version", "3.0")  # Default to 3.0 (faster)
+            pyannote_version = job.get("pyannote_version", "2.1")  # Default to 2.1 (faster)
             firebase_upload = job.get("firebase_upload", False)
             
             # Get raw audio file data
