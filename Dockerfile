@@ -1,10 +1,14 @@
 FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
 
+# Ensure CUDA is accessible for ONNX Runtime
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 ENV PIP_CONSTRAINT=/app/constraints.txt
 ENV PIP_NO_BUILD_ISOLATION=1
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 WORKDIR /app
 
@@ -39,8 +43,12 @@ RUN pip install --no-cache-dir "megatron-core"
 # Install NeMo 2.4+ with ALL its dependencies
 RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 
-# Install pyannote, onnxruntime (required for pyannote 3.0), and runpod
-RUN pip install --no-cache-dir "pyannote.audio" "onnxruntime-gpu" "runpod"
+# Install pyannote and runpod
+RUN pip install --no-cache-dir "pyannote.audio" "runpod"
+
+# Install ONNX Runtime GPU with proper CUDA 12.x support (required for pyannote 3.0)
+# Version 1.17.1 is compatible with CUDA 12.1 in the base image
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.1"
 
 # Create models directory for baked-in models
 RUN mkdir -p /app/models
