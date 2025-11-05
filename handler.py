@@ -515,6 +515,13 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         
         logger.info(f"🎯 Loading pyannote speaker-diarization-{pyannote_version}")
         
+        # CRITICAL: Set HF token as environment variable early so sub-models can use it
+        # This is especially important for pyannote 2.1 which downloads segmentation/embedding models
+        if hf_token:
+            os.environ['HF_TOKEN'] = hf_token
+            os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
+            logger.info("✅ HuggingFace token set as environment variable for sub-model downloads")
+        
         # Clear memory before loading diarization model
         clear_gpu_memory()
         
@@ -671,6 +678,9 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     logger.error("You can get a token at https://hf.co/settings/tokens")
                     return False
                 logger.info("🔄 Downloading fresh pyannote model...")
+                # Set HF token as env var so sub-models can use it
+                os.environ['HF_TOKEN'] = hf_token
+                os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
                 diarization_model = Pipeline.from_pretrained(
                     model_id, 
                     use_auth_token=hf_token,
@@ -690,9 +700,12 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     logger.info("  - https://hf.co/pyannote/segmentation-3.0")
                     logger.info("  - https://hf.co/pyannote/speaker-diarization-3.0")
                 
-                # Set environment variables for caching
+                # Set environment variables for caching and authentication
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
                 os.environ['HF_HOME'] = pyannote_cache_dir
+                # CRITICAL: Set HF token as env var so sub-models (segmentation, embedding) can use it
+                os.environ['HF_TOKEN'] = hf_token
+                os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
                 
                 diarization_model = Pipeline.from_pretrained(
                     model_id, 
