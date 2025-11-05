@@ -1222,7 +1222,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                     'speaker': speaker,
                     'duration': segment_duration
                 })
-                logger.info(f"Speaker segment: {speaker} ({turn.start:.2f}s-{turn.end:.2f}s, {segment_duration:.2f}s)")
+                # Removed verbose per-segment logging - too slow for long files
+                # Summary logged at end instead
             
             # Average embeddings per speaker for better representation
             for speaker, embeddings_list in speaker_embeddings.items():
@@ -1239,10 +1240,13 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 if speaker in speaker_embeddings and speaker_embeddings[speaker]:
                     segment['speaker_embedding'] = speaker_embeddings[speaker][0]
             
-            logger.info(f"Pyannote diarization completed: {len(segments)} segments found")
+            # Summary logging (replaces verbose per-segment logging)
+            logger.info(f"✅ Pyannote diarization completed: {len(segments)} segments found")
             if segments:
                 speakers_found = set(seg['speaker'] for seg in segments)
-                logger.info(f"Speakers detected: {speakers_found}")
+                total_duration = sum(seg['duration'] for seg in segments)
+                logger.info(f"📊 Speakers detected: {speakers_found} ({len(speakers_found)} total)")
+                logger.info(f"⏱️ Total diarized duration: {total_duration:.1f}s across {len(segments)} segments")
             else:
                 logger.warning("⚠️ No speaker segments detected - trying fallback strategies...")
                     
