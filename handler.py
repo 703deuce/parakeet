@@ -566,71 +566,77 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     logger.debug(f"Could not log model config: {e}")
                 # Move to GPU and exit early since we loaded from baked-in model
                 if torch.cuda.is_available():
-                    logger.info("🚀 Moving pyannote pipeline to GPU")
                     device = torch.device("cuda")
                     diarization_model.to(device)
                     
-                    logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
-                    try:
-                        # CRITICAL: Force segmentation model to GPU and set to eval mode
-                        # Note: pyannote 2.1 and 3.0 may have different structures
-                        if hasattr(diarization_model, '_segmentation'):
-                            seg = diarization_model._segmentation
-                            if hasattr(seg, 'model_') and seg.model_ is not None:
-                                seg.model_ = seg.model_.to(device)
-                                if hasattr(seg.model_, 'eval'):
+                    # Version-specific GPU setup: 3.0 has specific structure, 2.1 is simpler
+                    if pyannote_version == "3.0":
+                        # PYANNOTE 3.0: Original working code (keep this exactly as it was)
+                        logger.info("🚀 Moving pyannote 3.0 pipeline to GPU")
+                        logger.info("🔧 Forcing all pyannote 3.0 sub-modules to GPU...")
+                        try:
+                            # CRITICAL: Force segmentation model to GPU and set to eval mode
+                            if hasattr(diarization_model, '_segmentation'):
+                                seg = diarization_model._segmentation
+                                if hasattr(seg, 'model_'):
+                                    seg.model_ = seg.model_.to(device)
                                     seg.model_.eval()  # Set to eval mode for inference
-                                logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                            elif hasattr(seg, 'model') and seg.model is not None:
-                                seg.model = seg.model.to(device)
-                                if hasattr(seg.model, 'eval'):
+                                    logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                                elif hasattr(seg, 'model'):
+                                    seg.model = seg.model.to(device)
                                     seg.model.eval()  # Set to eval mode for inference
-                                logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                            else:
-                                logger.info("ℹ️ Segmentation model structure differs for this pyannote version - using basic GPU placement")
-                        
-                        # CRITICAL: Force embedding model to GPU and set to eval mode
-                        # Note: pyannote 2.1 may not have _embedding in the same way as 3.0
-                        if hasattr(diarization_model, '_embedding'):
-                            emb = diarization_model._embedding
-                            if hasattr(emb, 'model_') and emb.model_ is not None:
-                                emb.model_ = emb.model_.to(device)
-                                if hasattr(emb.model_, 'eval'):
+                                    logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                            
+                            # CRITICAL: Force embedding model to GPU and set to eval mode
+                            if hasattr(diarization_model, '_embedding'):
+                                emb = diarization_model._embedding
+                                if hasattr(emb, 'model_'):
+                                    emb.model_ = emb.model_.to(device)
                                     emb.model_.eval()  # Set to eval mode for inference
-                                logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                            elif hasattr(emb, 'model') and emb.model is not None:
-                                emb.model = emb.model.to(device)
-                                if hasattr(emb.model, 'eval'):
+                                    logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                                elif hasattr(emb, 'model'):
+                                    emb.model = emb.model.to(device)
                                     emb.model.eval()  # Set to eval mode for inference
-                                logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                            else:
-                                logger.info("ℹ️ Embedding model structure differs for this pyannote version - using basic GPU placement")
-                        else:
-                            logger.info("ℹ️ No _embedding attribute found (pyannote 2.1 may use different structure) - using basic GPU placement")
-                        
-                        # Set pipeline device attribute
-                        if hasattr(diarization_model, 'device'):
-                            diarization_model.device = device
-                            logger.info(f"✅ Pipeline device set to: {device}")
-                        
-                        # Pyannote Pipeline doesn't have .eval() - it's always in eval mode
-                        # The sub-models were already set to eval mode above
-                        
-                        # Disable gradients for faster inference
-                        torch.set_grad_enabled(False)
-                        
-                        # Enable PyTorch optimizations
-                        torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
-                        torch.backends.cuda.matmul.allow_tf32 = True
-                        torch.backends.cudnn.allow_tf32 = True
-                        
-                        # Log GPU status
-                        gpu_mem = torch.cuda.memory_allocated() / 1e9
-                        logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
-                        logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
-                        logger.info("Continuing with basic GPU placement - this may result in CPU usage")
+                                    logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                            
+                            # Set pipeline device attribute
+                            if hasattr(diarization_model, 'device'):
+                                diarization_model.device = device
+                                logger.info(f"✅ Pipeline device set to: {device}")
+                            
+                            # Disable gradients for faster inference
+                            torch.set_grad_enabled(False)
+                            
+                            # Enable PyTorch optimizations
+                            torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
+                            
+                            # Log GPU status
+                            gpu_mem = torch.cuda.memory_allocated() / 1e9
+                            logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                            logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
+                            logger.info("Continuing with basic GPU placement - this may result in CPU usage")
+                    else:
+                        # PYANNOTE 2.1: Simpler structure, just move to GPU and enable optimizations
+                        logger.info("🚀 Moving pyannote 2.1 pipeline to GPU (simpler structure)")
+                        try:
+                            # Pyannote 2.1 has different structure - just move to GPU and enable optimizations
+                            # The pipeline.to(device) call above should handle most of it
+                            torch.set_grad_enabled(False)
+                            torch.backends.cudnn.benchmark = True
+                            torch.backends.cuda.matmul.allow_tf32 = True
+                            torch.backends.cudnn.allow_tf32 = True
+                            
+                            # Log GPU status
+                            gpu_mem = torch.cuda.memory_allocated() / 1e9
+                            logger.info(f"✅ Pyannote 2.1 pipeline moved to GPU: {torch.cuda.get_device_name(0)}")
+                            logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not fully configure GPU for pyannote 2.1: {e}")
+                            logger.info("Continuing with basic GPU placement")
                 clear_gpu_memory()
                 logger.info("Pyannote diarization pipeline loaded successfully")
                 return True
@@ -702,73 +708,77 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
             
         # Move pipeline to GPU if available
         if torch.cuda.is_available():
-            logger.info("🚀 Moving pyannote pipeline to GPU")
             device = torch.device("cuda")
             diarization_model.to(device)
             
-            logger.info("🔧 Forcing all pyannote sub-modules to GPU...")
-            
-            try:
-                # CRITICAL: Force segmentation model to GPU and set to eval mode
-                # Note: pyannote 2.1 and 3.0 may have different structures
-                if hasattr(diarization_model, '_segmentation'):
-                    seg = diarization_model._segmentation
-                    if hasattr(seg, 'model_') and seg.model_ is not None:
-                        seg.model_ = seg.model_.to(device)
-                        if hasattr(seg.model_, 'eval'):
+            # Version-specific GPU setup: 3.0 has specific structure, 2.1 is simpler
+            if pyannote_version == "3.0":
+                # PYANNOTE 3.0: Original working code (keep this exactly as it was)
+                logger.info("🚀 Moving pyannote 3.0 pipeline to GPU")
+                logger.info("🔧 Forcing all pyannote 3.0 sub-modules to GPU...")
+                try:
+                    # CRITICAL: Force segmentation model to GPU and set to eval mode
+                    if hasattr(diarization_model, '_segmentation'):
+                        seg = diarization_model._segmentation
+                        if hasattr(seg, 'model_'):
+                            seg.model_ = seg.model_.to(device)
                             seg.model_.eval()  # Set to eval mode for inference
-                        logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                    elif hasattr(seg, 'model') and seg.model is not None:
-                        seg.model = seg.model.to(device)
-                        if hasattr(seg.model, 'eval'):
+                            logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                        elif hasattr(seg, 'model'):
+                            seg.model = seg.model.to(device)
                             seg.model.eval()  # Set to eval mode for inference
-                        logger.info("✅ Segmentation model moved to GPU and set to eval mode")
-                    else:
-                        logger.info("ℹ️ Segmentation model structure differs for this pyannote version - using basic GPU placement")
-                
-                # CRITICAL: Force embedding model to GPU and set to eval mode
-                # Note: pyannote 2.1 may not have _embedding in the same way as 3.0
-                if hasattr(diarization_model, '_embedding'):
-                    emb = diarization_model._embedding
-                    if hasattr(emb, 'model_') and emb.model_ is not None:
-                        emb.model_ = emb.model_.to(device)
-                        if hasattr(emb.model_, 'eval'):
+                            logger.info("✅ Segmentation model moved to GPU and set to eval mode")
+                    
+                    # CRITICAL: Force embedding model to GPU and set to eval mode
+                    if hasattr(diarization_model, '_embedding'):
+                        emb = diarization_model._embedding
+                        if hasattr(emb, 'model_'):
+                            emb.model_ = emb.model_.to(device)
                             emb.model_.eval()  # Set to eval mode for inference
-                        logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                    elif hasattr(emb, 'model') and emb.model is not None:
-                        emb.model = emb.model.to(device)
-                        if hasattr(emb.model, 'eval'):
+                            logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                        elif hasattr(emb, 'model'):
+                            emb.model = emb.model.to(device)
                             emb.model.eval()  # Set to eval mode for inference
-                        logger.info("✅ Embedding model moved to GPU and set to eval mode")
-                    else:
-                        logger.info("ℹ️ Embedding model structure differs for this pyannote version - using basic GPU placement")
-                else:
-                    logger.info("ℹ️ No _embedding attribute found (pyannote 2.1 may use different structure) - using basic GPU placement")
-                
-                # Set pipeline device attribute
-                if hasattr(diarization_model, 'device'):
-                    diarization_model.device = device
-                    logger.info(f"✅ Pipeline device set to: {device}")
-                
-                # Pyannote Pipeline doesn't have .eval() - it's always in eval mode
-                # The sub-models were already set to eval mode above
-                
-                # Disable gradients for faster inference
-                torch.set_grad_enabled(False)
-                
-                # Enable PyTorch optimizations
-                torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-                
-                # Log GPU status
-                gpu_mem = torch.cuda.memory_allocated() / 1e9
-                logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
-                logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
-                
-            except Exception as e:
-                logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
-                logger.info("Continuing with basic GPU placement - this may result in CPU usage")
+                            logger.info("✅ Embedding model moved to GPU and set to eval mode")
+                    
+                    # Set pipeline device attribute
+                    if hasattr(diarization_model, 'device'):
+                        diarization_model.device = device
+                        logger.info(f"✅ Pipeline device set to: {device}")
+                    
+                    # Disable gradients for faster inference
+                    torch.set_grad_enabled(False)
+                    
+                    # Enable PyTorch optimizations
+                    torch.backends.cudnn.benchmark = True  # Auto-tune for your GPU
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    
+                    # Log GPU status
+                    gpu_mem = torch.cuda.memory_allocated() / 1e9
+                    logger.info(f"✅ TF32 re-enabled after pyannote load (pyannote disables it by default) on GPU: {torch.cuda.get_device_name(0)}")
+                    logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not force all sub-modules to GPU: {e}")
+                    logger.info("Continuing with basic GPU placement - this may result in CPU usage")
+            else:
+                # PYANNOTE 2.1: Simpler structure, just move to GPU and enable optimizations
+                logger.info("🚀 Moving pyannote 2.1 pipeline to GPU (simpler structure)")
+                try:
+                    # Pyannote 2.1 has different structure - just move to GPU and enable optimizations
+                    # The pipeline.to(device) call above should handle most of it
+                    torch.set_grad_enabled(False)
+                    torch.backends.cudnn.benchmark = True
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    
+                    # Log GPU status
+                    gpu_mem = torch.cuda.memory_allocated() / 1e9
+                    logger.info(f"✅ Pyannote 2.1 pipeline moved to GPU: {torch.cuda.get_device_name(0)}")
+                    logger.info(f"💾 GPU memory after loading: {gpu_mem:.2f}GB")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not fully configure GPU for pyannote 2.1: {e}")
+                    logger.info("Continuing with basic GPU placement")
         else:
             logger.warning("⚠️ CUDA not available, using CPU for diarization")
         
@@ -1038,21 +1048,22 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None) -> Li
                     # Force re-move to GPU (in case anything slipped to CPU)
                     diarization_model.to(device)
                     # Re-set sub-models to eval mode (pipeline itself doesn't have .eval())
+                    # Note: This is mainly for pyannote 3.0; 2.1 has different structure
                     try:
                         if hasattr(diarization_model, '_segmentation'):
                             seg = diarization_model._segmentation
-                            if hasattr(seg, 'model_'):
+                            if hasattr(seg, 'model_') and seg.model_ is not None and hasattr(seg.model_, 'eval'):
                                 seg.model_.eval()
-                            elif hasattr(seg, 'model'):
+                            elif hasattr(seg, 'model') and seg.model is not None and hasattr(seg.model, 'eval'):
                                 seg.model.eval()
                         if hasattr(diarization_model, '_embedding'):
                             emb = diarization_model._embedding
-                            if hasattr(emb, 'model_'):
+                            if hasattr(emb, 'model_') and emb.model_ is not None and hasattr(emb.model_, 'eval'):
                                 emb.model_.eval()
-                            elif hasattr(emb, 'model'):
+                            elif hasattr(emb, 'model') and emb.model is not None and hasattr(emb.model, 'eval'):
                                 emb.model.eval()
                     except Exception:
-                        pass  # If we can't set eval mode, continue anyway
+                        pass  # If we can't set eval mode, continue anyway (pyannote 2.1 may not have these)
                     # Disable gradients for faster inference
                     torch.set_grad_enabled(False)
                     
