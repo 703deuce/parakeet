@@ -16,6 +16,7 @@ WORKDIR /app
 RUN echo "numpy<2.0" > /app/constraints.txt
 
 # Install system packages AND gcc-11 for newer libstdc++
+# Also install CUDA 12 cuBLAS libraries (required for onnxruntime-gpu)
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
@@ -24,6 +25,8 @@ RUN apt-get update && apt-get install -y \
     git \
     gcc-11 \
     g++-11 \
+    libcublas-12-1 \
+    libcublaslt-12-1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink the newer libstdc++ from gcc-11
@@ -47,9 +50,9 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
 # Install ONNX Runtime GPU (required for pyannote 3.0)
-# Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.18.1 is built specifically for CUDA 12.1
+# Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.19.0+ supports CUDA 12.1
 # This provides GPU acceleration for speaker embeddings, improving diarization speed
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.18.1"
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.19.0"
 
 # Test ONNX GPU provider is available
 RUN python3 -c "import onnxruntime as ort; providers = ort.get_available_providers(); print(f'ONNX providers: {providers}'); assert 'CUDAExecutionProvider' in providers, 'CUDA not available!'"
