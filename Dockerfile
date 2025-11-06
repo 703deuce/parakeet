@@ -102,7 +102,7 @@ ENV HF_TOKEN=${HF_TOKEN}
 #   https://hf.co/pyannote/segmentation-3.1
 #   https://hf.co/pyannote/speaker-diarization-3.1
 RUN if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "" ]; then \
-        echo "📥 Downloading pyannote models during build (HF_TOKEN provided)..."; \
+        echo "📥 Downloading pyannote models during build (HF_TOKEN provided via GitHub secret)..."; \
         python3 -c "\
 from pyannote.audio import Pipeline; \
 import os; \
