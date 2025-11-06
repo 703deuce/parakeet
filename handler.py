@@ -515,6 +515,21 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         
         logger.info(f"🎯 Loading pyannote speaker-diarization-{pyannote_version}")
         
+        # CRITICAL: Set LD_LIBRARY_PATH at runtime to ensure ONNX Runtime finds CUDA libraries
+        # ONNX Runtime needs this to locate libcublas.so.12 and libcublasLt.so.12
+        current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
+        cuda_lib_paths = [
+            '/opt/conda/lib',
+            '/usr/local/cuda/lib64',
+            '/usr/lib/x86_64-linux-gnu'
+        ]
+        # Add CUDA library paths if not already present
+        for path in cuda_lib_paths:
+            if path not in current_ld_path:
+                current_ld_path = f"{path}:{current_ld_path}" if current_ld_path else path
+        os.environ['LD_LIBRARY_PATH'] = current_ld_path
+        logger.info(f"🔧 LD_LIBRARY_PATH set for ONNX Runtime: {current_ld_path[:200]}...")
+        
         # CRITICAL: Configure ONNX Runtime to prefer CUDA provider before pyannote loads
         # This ensures pyannote's embedding models use GPU acceleration
         try:
@@ -528,10 +543,12 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                 logger.info("✅ ONNX Runtime CUDA provider configured - pyannote will use GPU for embeddings")
             else:
                 logger.warning("⚠️ ONNX Runtime CUDA provider not available - will use CPU for embeddings")
+                logger.warning(f"⚠️ LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'not set')}")
         except ImportError:
             logger.warning("⚠️ onnxruntime not available - pyannote embeddings may not work optimally")
         except Exception as e:
             logger.warning(f"⚠️ Could not configure ONNX Runtime: {e}")
+            logger.warning(f"⚠️ LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'not set')}")
         
         # CRITICAL: Set HF token as environment variable early so sub-models can use it
         # This is especially important for pyannote 2.1 which downloads segmentation/embedding models
