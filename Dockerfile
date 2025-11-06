@@ -49,17 +49,26 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 # Install pyannote and runpod
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
+# Verify CUDA libraries exist before installing ONNX Runtime
+RUN echo "Checking for CUDA libraries..." && \
+    ls -la /usr/local/cuda/lib64/libcublas.so* 2>/dev/null || echo "⚠️ libcublas.so not found in /usr/local/cuda/lib64/" && \
+    ls -la /usr/local/cuda/lib64/libcublasLt.so* 2>/dev/null || echo "⚠️ libcublasLt.so not found in /usr/local/cuda/lib64/" && \
+    echo "✅ CUDA library check complete"
+
 # Install ONNX Runtime GPU (required for pyannote 3.0)
 # Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.19.2 supports CUDA 12.1
 # This provides GPU acceleration for speaker embeddings, improving diarization speed
 RUN pip install --no-cache-dir "onnxruntime-gpu==1.19.2"
 
 # Test ONNX GPU provider is available (verifies CUDA libraries are found)
+# This will fail the build if CUDA provider is not available
 RUN python3 -c "\
 import onnxruntime as ort; \
+import os; \
+print('LD_LIBRARY_PATH:', os.environ.get('LD_LIBRARY_PATH', 'not set')); \
 providers = ort.get_available_providers(); \
 print('ONNX Providers:', providers); \
-assert 'CUDAExecutionProvider' in providers, 'CUDA provider not found!'; \
+assert 'CUDAExecutionProvider' in providers, 'CUDA provider not found! Check that CUDA libraries are in LD_LIBRARY_PATH.'; \
 print('✅ ONNX GPU is working!')"
 
 # Create models directory for baked-in models
