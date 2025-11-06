@@ -18,7 +18,7 @@ WORKDIR /app
 RUN echo "numpy<2.0" > /app/constraints.txt
 
 # Install system packages AND gcc-11 for newer libstdc++
-# Also install CUDA 12 cuBLAS libraries (required for onnxruntime-gpu)
+# Note: CUDA libraries are already in the PyTorch base image at /usr/local/cuda/lib64/
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
@@ -27,8 +27,6 @@ RUN apt-get update && apt-get install -y \
     git \
     gcc-11 \
     g++-11 \
-    libcublas-12-1 \
-    libcublaslt-12-1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Symlink the newer libstdc++ from gcc-11
