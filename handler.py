@@ -1270,7 +1270,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                     import numpy as np
                     avg_embedding = np.mean(embeddings_list, axis=0)
                     speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                    logger.info(f"📊 Averaged {len(embeddings_list)} embeddings for {speaker}")
+                    # Removed verbose embedding logging - not critical for performance
             
             # Store embeddings in segments for later use
             for segment in segments:
