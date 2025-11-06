@@ -46,10 +46,13 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 # Install pyannote and runpod
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
-# Install CPU-only ONNX Runtime (required for pyannote 3.0)
-# Using CPU version avoids CUDA 11/12 library conflicts - still fast since main PyTorch model runs on GPU
-# Version 1.17.1 provides optimized embeddings even on CPU
-RUN pip install --no-cache-dir "onnxruntime==1.17.1"
+# Install ONNX Runtime GPU (required for pyannote 3.0)
+# Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.18.1 is built specifically for CUDA 12.1
+# This provides GPU acceleration for speaker embeddings, improving diarization speed
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.18.1"
+
+# Test ONNX GPU provider is available
+RUN python3 -c "import onnxruntime as ort; providers = ort.get_available_providers(); print(f'ONNX providers: {providers}'); assert 'CUDAExecutionProvider' in providers, 'CUDA not available!'"
 
 # Create models directory for baked-in models
 RUN mkdir -p /app/models
