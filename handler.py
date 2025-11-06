@@ -1183,15 +1183,12 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 
                 logger.info("Running pyannote diarization pipeline...")
                 
-                # Check ONNX Runtime status if available
+                # Check ONNX Runtime status (minimal logging - only if CUDA not available)
                 try:
                     import onnxruntime as ort
                     available_providers = ort.get_available_providers()
-                    logger.info(f"🔍 ONNX Runtime providers: {available_providers}")
-                    if 'CUDAExecutionProvider' in available_providers:
-                        logger.info("✅ ONNX Runtime CUDA provider available")
-                    else:
-                        logger.info("⚠️ ONNX Runtime using CPU provider (CUDA not available)")
+                    if 'CUDAExecutionProvider' not in available_providers:
+                        logger.warning("⚠️ ONNX Runtime using CPU provider (CUDA not available)")
                 except Exception as e:
                     logger.warning(f"⚠️ Could not check ONNX Runtime status: {e}")
                 
