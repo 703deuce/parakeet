@@ -8,7 +8,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 ENV PIP_CONSTRAINT=/app/constraints.txt
 ENV PIP_NO_BUILD_ISOLATION=1
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+# Set CUDA library path - include /opt/conda/lib where PyTorch's CUDA libraries are located
+# This helps ONNX Runtime find CUDA libraries
+ENV LD_LIBRARY_PATH=/opt/conda/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 WORKDIR /app
 
@@ -50,12 +52,17 @@ RUN pip install --no-cache-dir "nemo_toolkit[asr]>=2.4.0,<3.0"
 RUN pip install --no-cache-dir "pyannote.audio" "runpod"
 
 # Install ONNX Runtime GPU (required for pyannote 3.0)
-# Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.19.0+ supports CUDA 12.1
+# Using GPU version for CUDA 12.1 - onnxruntime-gpu 1.19.2 supports CUDA 12.1
 # This provides GPU acceleration for speaker embeddings, improving diarization speed
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.19.0"
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.19.2"
 
-# Test ONNX GPU provider is available
-RUN python3 -c "import onnxruntime as ort; providers = ort.get_available_providers(); print(f'ONNX providers: {providers}'); assert 'CUDAExecutionProvider' in providers, 'CUDA not available!'"
+# Test ONNX GPU provider is available (verifies CUDA libraries are found)
+RUN python3 -c "\
+import onnxruntime as ort; \
+providers = ort.get_available_providers(); \
+print('ONNX Providers:', providers); \
+assert 'CUDAExecutionProvider' in providers, 'CUDA provider not found!'; \
+print('✅ ONNX GPU is working!')"
 
 # Create models directory for baked-in models
 RUN mkdir -p /app/models
