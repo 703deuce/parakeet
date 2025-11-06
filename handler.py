@@ -504,12 +504,12 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
     
     Args:
         hf_token: HuggingFace token for model access
-        pyannote_version: Version to use - "2.1" (default, faster) or "3.0" (slower, more accurate)
+        pyannote_version: Version to use - "2.1" (default, faster) or "3.1" (slower, more accurate)
     """
     global diarization_model
     try:
         # Validate version
-        if pyannote_version not in ["3.0", "2.1"]:
+        if pyannote_version not in ["3.1", "2.1"]:
             logger.warning(f"⚠️ Invalid pyannote version '{pyannote_version}', defaulting to 2.1")
             pyannote_version = "2.1"
         
@@ -573,9 +573,9 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         if pyannote_version == "2.1":
             model_id = "pyannote/speaker-diarization@2.1"
             model_dir_name = "pyannote-speaker-diarization-2.1"
-        else:  # 3.0 (slower but more accurate)
-            model_id = "pyannote/speaker-diarization-3.0"
-            model_dir_name = "pyannote-speaker-diarization-3.0"
+        else:  # 3.1 (slower but more accurate)
+            model_id = "pyannote/speaker-diarization-3.1"
+            model_dir_name = "pyannote-speaker-diarization-3.1"
         
         # Check baked-in models first (from Docker image), then runtime cache
         baked_models_dir = "/app/models"
@@ -611,11 +611,11 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     device = torch.device("cuda")
                     diarization_model.to(device)
                     
-                    # Version-specific GPU setup: 3.0 has specific structure, 2.1 is simpler
-                    if pyannote_version == "3.0":
-                        # PYANNOTE 3.0: Original working code (keep this exactly as it was)
-                        logger.info("🚀 Moving pyannote 3.0 pipeline to GPU")
-                        logger.info("🔧 Forcing all pyannote 3.0 sub-modules to GPU...")
+                    # Version-specific GPU setup: 3.1 has specific structure, 2.1 is simpler
+                    if pyannote_version == "3.1":
+                        # PYANNOTE 3.1: Original working code (keep this exactly as it was)
+                        logger.info("🚀 Moving pyannote 3.1 pipeline to GPU")
+                        logger.info("🔧 Forcing all pyannote 3.1 sub-modules to GPU...")
                         try:
                             # CRITICAL: Force segmentation model to GPU and set to eval mode
                             if hasattr(diarization_model, '_segmentation'):
@@ -744,8 +744,8 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                     logger.info("  - https://hf.co/pyannote/segmentation")
                     logger.info("  - https://hf.co/pyannote/speaker-diarization")
                 else:  # 3.0
-                    logger.info("  - https://hf.co/pyannote/segmentation-3.0")
-                    logger.info("  - https://hf.co/pyannote/speaker-diarization-3.0")
+                    logger.info("  - https://hf.co/pyannote/segmentation-3.1")
+                    logger.info("  - https://hf.co/pyannote/speaker-diarization-3.1")
                 
                 # Set environment variables for caching and authentication
                 os.environ['PYANNOTE_CACHE'] = pyannote_cache_dir
@@ -771,11 +771,11 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
             device = torch.device("cuda")
             diarization_model.to(device)
             
-            # Version-specific GPU setup: 3.0 has specific structure, 2.1 is simpler
-            if pyannote_version == "3.0":
-                # PYANNOTE 3.0: Original working code (keep this exactly as it was)
-                logger.info("🚀 Moving pyannote 3.0 pipeline to GPU")
-                logger.info("🔧 Forcing all pyannote 3.0 sub-modules to GPU...")
+            # Version-specific GPU setup: 3.1 has specific structure, 2.1 is simpler
+            if pyannote_version == "3.1":
+                # PYANNOTE 3.1: Original working code (keep this exactly as it was)
+                logger.info("🚀 Moving pyannote 3.1 pipeline to GPU")
+                logger.info("🔧 Forcing all pyannote 3.1 sub-modules to GPU...")
                 try:
                     # CRITICAL: Force segmentation model to GPU and set to eval mode
                     if hasattr(diarization_model, '_segmentation'):
@@ -873,9 +873,9 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                 logger.error("")
                 logger.error("Then make sure your HF token has access to both models.")
             else:
-                logger.error("For pyannote 3.0, you MUST accept terms at BOTH of these URLs:")
-                logger.error("  1. https://hf.co/pyannote/segmentation-3.0")
-                logger.error("  2. https://hf.co/pyannote/speaker-diarization-3.0")
+                logger.error("For pyannote 3.1, you MUST accept terms at BOTH of these URLs:")
+                logger.error("  1. https://hf.co/pyannote/segmentation-3.1")
+                logger.error("  2. https://hf.co/pyannote/speaker-diarization-3.1")
                 logger.error("")
                 logger.error("Then make sure your HF token has access to both models.")
         else:
@@ -884,8 +884,8 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                 logger.error("1. Accepted pyannote/segmentation user conditions at: https://hf.co/pyannote/segmentation")
                 logger.error("2. Accepted pyannote/speaker-diarization user conditions at: https://hf.co/pyannote/speaker-diarization")
             else:
-                logger.error("1. Accepted pyannote/segmentation-3.0 user conditions at: https://hf.co/pyannote/segmentation-3.0")
-                logger.error("2. Accepted pyannote/speaker-diarization-3.0 user conditions at: https://hf.co/pyannote/speaker-diarization-3.0")
+                logger.error("1. Accepted pyannote/segmentation-3.1 user conditions at: https://hf.co/pyannote/segmentation-3.1")
+                logger.error("2. Accepted pyannote/speaker-diarization-3.1 user conditions at: https://hf.co/pyannote/speaker-diarization-3.1")
             logger.error("3. Created a valid HuggingFace access token at: https://hf.co/settings/tokens")
         return False
 
@@ -1193,7 +1193,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                     # Force re-move to GPU (in case anything slipped to CPU)
                     diarization_model.to(device)
                     # Re-set sub-models to eval mode (pipeline itself doesn't have .eval())
-                    # Note: This is mainly for pyannote 3.0; 2.1 has different structure
+                    # Note: This is mainly for pyannote 3.1; 2.1 has different structure
                     try:
                         if hasattr(diarization_model, '_segmentation'):
                             seg = diarization_model._segmentation
@@ -2365,7 +2365,7 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
                 'segments_processed': len(diarized_results),
                 'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                 'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                'diarization_model': 'pyannote/speaker-diarization-3.0',
+                'diarization_model': 'pyannote/speaker-diarization-3.1',
                 'processing_method': 'firebase_single_file_diarization',
                 'chunking_method': 'none_firebase_download',
                 'streaming_config': None,
@@ -2491,7 +2491,7 @@ def process_audio_with_diarization(audio_file_path: str, include_timestamps: boo
                 'word_timestamps': word_timestamps,
                 'audio_duration_seconds': transcription_result.get('audio_duration_seconds', 0),
                 'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                'diarization_model': 'pyannote/speaker-diarization-3.0',
+                'diarization_model': 'pyannote/speaker-diarization-3.1',
                 'processing_method': 'direct_firebase_diarization'
             }
         else:
@@ -2749,7 +2749,7 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
                     'segments_processed': len(diarized_results),
                     'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
                     'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                    'diarization_model': 'pyannote/speaker-diarization-3.0',
+                    'diarization_model': 'pyannote/speaker-diarization-3.1',
                     'processing_method': 'firebase_url_diarization',
                     'chunking_method': 'none_direct_download',
                     'long_audio_optimization': 'local_attention_enabled'
@@ -3727,7 +3727,7 @@ def transcribe_long_audio(audio_path: str, include_timestamps: bool = True,
 def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: bool, use_diarization: bool,
                                    num_speakers: int = None, hf_token: str = None, audio_format: str = "wav",
                                    total_duration: float = 0, speaker_threshold: float = 0.35, 
-                                   single_speaker_mode: bool = True, pyannote_version: str = "3.0",
+                                   single_speaker_mode: bool = True, pyannote_version: str = "3.1",
                                    batch_size: int = None, preserve_alignment: bool = None,
                                    min_speakers: int = None, max_speakers: int = None,
                                    segmentation_params: Dict[str, Any] = None,
