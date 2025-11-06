@@ -79,15 +79,19 @@ ENV HF_HOME=/app/models
 ENV TRANSFORMERS_CACHE=/app/models
 ENV HF_DATASETS_CACHE=/app/models
 
-# Accept HuggingFace token as build argument (set in RunPod build settings)
-# This allows downloading pyannote models during build
+# Accept HuggingFace token as build argument
+# IMPORTANT: Pass HF_TOKEN during build:
+#   docker build --build-arg HF_TOKEN=your_token_here .
+# Or if HF_TOKEN is set as environment variable:
+#   docker build --build-arg HF_TOKEN=$HF_TOKEN .
 ARG HF_TOKEN
 ENV HF_TOKEN=${HF_TOKEN}
 
 # Download pyannote speaker diarization model during build
 # Note: This requires HF_TOKEN build arg and user must have accepted model terms
 # at https://hf.co/pyannote/segmentation-3.1 and https://hf.co/pyannote/speaker-diarization-3.1
-RUN if [ -n "$HF_TOKEN" ]; then \
+RUN if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "" ]; then \
+        echo "📥 Downloading pyannote models with HF_TOKEN..."; \
         python3 -c "\
 from pyannote.audio import Pipeline; \
 import os; \
@@ -97,7 +101,9 @@ pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth
 print('✅ Pyannote model baked into image'); \
 "; \
     else \
-        echo "⚠️ HF_TOKEN not provided - skipping pyannote model download (will download at runtime)"; \
+        echo "⚠️ HF_TOKEN not provided during build"; \
+        echo "⚠️ Model will be downloaded at runtime (slower first request)"; \
+        echo "⚠️ To bake model: docker build --build-arg HF_TOKEN=your_token ."; \
     fi
 
 # Download Parakeet model during build (NeMo caches to default location)
