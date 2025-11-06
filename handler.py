@@ -697,18 +697,7 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
             except Exception as baked_error:
                 logger.warning(f"⚠️ Failed to load baked-in model: {baked_error}, falling back to runtime cache")
         
-        # DEBUG: Log cache directory status for debugging
-        logger.info(f"🔍 DEBUG: Checking cache directory: {pyannote_cache_dir}")
-        logger.info(f"🔍 DEBUG: Cache dir exists: {os.path.exists(pyannote_cache_dir)}")
-        if os.path.exists(pyannote_cache_dir):
-            try:
-                cache_files = os.listdir(pyannote_cache_dir)
-                logger.info(f"🔍 DEBUG: Cache files found: {cache_files}")
-                logger.info(f"🔍 DEBUG: config.yaml exists: {os.path.exists(cached_config_path)}")
-            except Exception as e:
-                logger.info(f"🔍 DEBUG: Error listing cache dir: {e}")
-        else:
-            logger.info(f"🔍 DEBUG: Cache directory does not exist at all")
+        # Check cache directory (minimal logging)
         
         # Check runtime cache (if baked-in model not found or failed)
         if os.path.exists(cached_config_path):
@@ -992,30 +981,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
     try:
         logger.info(f"Performing pyannote.audio speaker diarization on: {audio_path}")
         
-        # DEBUG: Verify file details
-        if os.path.exists(audio_path):
-            file_size = os.path.getsize(audio_path)
-            logger.info(f"🔍 DIARIZATION DEBUG - File: {audio_path}")
-            logger.info(f"🔍 DIARIZATION DEBUG - Size: {file_size} bytes ({file_size/1024/1024:.2f} MB)")
-            
-            # Check actual audio duration with multiple methods
-            try:
-                from pydub import AudioSegment
-                audio = AudioSegment.from_file(audio_path)
-                duration_pydub = len(audio) / 1000.0
-                logger.info(f"🔍 DIARIZATION DEBUG - Duration (pydub): {duration_pydub:.2f}s")
-                
-                import torchaudio
-                waveform, sample_rate = torchaudio.load(audio_path)
-                duration_torch = waveform.shape[1] / sample_rate
-                logger.info(f"🔍 DIARIZATION DEBUG - Duration (torchaudio): {duration_torch:.2f}s")
-                
-                if duration_pydub < 10:
-                    logger.error(f"❌ DIARIZATION ERROR - Audio too short: {duration_pydub}s - this might be the wrong file!")
-                    
-            except Exception as e:
-                logger.error(f"🔍 DIARIZATION DEBUG - Duration check failed: {e}")
-        else:
+        # Verify file exists (minimal check)
+        if not os.path.exists(audio_path):
             logger.error(f"❌ DIARIZATION ERROR - File does not exist: {audio_path}")
             return []
         
@@ -1072,13 +1039,6 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
             logger.info("✅ Using original mono audio for diarization")
         
         # Downsample to 16kHz for 2-3x faster diarization
-        # Check audio sample rate before downsampling
-        try:
-            from pydub import AudioSegment
-            audio_check = AudioSegment.from_file(mono_audio_path)
-            logger.info(f"🔍 Audio sample rate before downsampling: {audio_check.frame_rate}Hz, duration: {len(audio_check)/1000:.1f}s")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not check audio sample rate: {e}")
         
         downsampled_audio_path = downsample_for_diarization(mono_audio_path)
         
@@ -1816,35 +1776,8 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 except Exception as cleanup_error:
                     logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
-        logger.info(f"🔍 Raw Parakeet output type: {type(output)}")
-        logger.info(f"🔍 Raw Parakeet output length: {len(output) if hasattr(output, '__len__') else 'N/A'}")
-        
-        # 🔍 LOG RAW RESPONSE STRUCTURE FOR DEBUGGING
-        logger.info(f"📊 Raw Parakeet v3 output type: {type(output)}")
-        logger.info(f"📊 Raw output length: {len(output) if hasattr(output, '__len__') else 'N/A'}")
-        
-        if len(output) > 0:
-            first_result = output[0]
-            logger.info(f"📊 First result type: {type(first_result)}")
-            logger.info(f"📊 First result keys/attributes: {dir(first_result) if hasattr(first_result, '__dict__') else 'No __dict__'}")
-            
-            # Log first result as dict if possible
-            if hasattr(first_result, '__dict__'):
-                logger.info(f"📊 First result __dict__: {first_result.__dict__}")
-            elif hasattr(first_result, 'keys'):
-                logger.info(f"📊 First result keys: {list(first_result.keys())}")
-                logger.info(f"📊 First result content: {dict(first_result)}")
-            else:
-                logger.info(f"📊 First result direct: {first_result}")
-        
         # 🔧 SAFE KEY ACCESS - Try multiple ways to get text and timestamps
         first_result = output[0]
-        
-        # DEBUG: Log the actual model output structure
-        logger.info(f"🔍 Model raw output type: {type(output)}")
-        logger.info(f"🔍 First result type: {type(first_result)}")
-        logger.info(f"🔍 First result dir: {dir(first_result) if hasattr(first_result, '__dict__') else 'No __dict__'}")
-        logger.info(f"🔍 First result: {first_result}")
         
         # Try to get text content
         text_content = ""
@@ -2975,7 +2908,7 @@ def split_audio_into_chunks(audio_path: str, chunk_duration: int = 900, overlap_
             }
             chunks.append(chunk_info)
             
-            logger.info(f"✅ Created chunk {chunk_index}: {start_time/60:.1f}min - {end_time/60:.1f}min ({actual_duration/60:.1f}min)")
+            # Removed verbose per-chunk logging - summary logged at end instead
             
             # Move to next chunk start (without overlap)
             current_start = actual_end_sample
