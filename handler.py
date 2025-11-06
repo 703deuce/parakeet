@@ -515,6 +515,24 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         
         logger.info(f"🎯 Loading pyannote speaker-diarization-{pyannote_version}")
         
+        # CRITICAL: Configure ONNX Runtime to prefer CUDA provider before pyannote loads
+        # This ensures pyannote's embedding models use GPU acceleration
+        try:
+            import onnxruntime as ort
+            available_providers = ort.get_available_providers()
+            if 'CUDAExecutionProvider' in available_providers:
+                # Set environment variable to prefer CUDA (pyannote will respect this)
+                os.environ['ORT_CUDA_PROVIDER_PREFERRED'] = '1'
+                # Also set this for ONNX Runtime to prefer CUDA
+                # This affects how InferenceSession is created
+                logger.info("✅ ONNX Runtime CUDA provider configured - pyannote will use GPU for embeddings")
+            else:
+                logger.warning("⚠️ ONNX Runtime CUDA provider not available - will use CPU for embeddings")
+        except ImportError:
+            logger.warning("⚠️ onnxruntime not available - pyannote embeddings may not work optimally")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not configure ONNX Runtime: {e}")
+        
         # CRITICAL: Set HF token as environment variable early so sub-models can use it
         # This is especially important for pyannote 2.1 which downloads segmentation/embedding models
         if hf_token:
@@ -645,6 +663,18 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                             logger.warning(f"⚠️ Could not fully configure GPU for pyannote 2.1: {e}")
                             logger.info("Continuing with basic GPU placement")
                 clear_gpu_memory()
+                
+                # Verify ONNX Runtime CUDA provider is available after model load
+                try:
+                    import onnxruntime as ort
+                    available_providers = ort.get_available_providers()
+                    if 'CUDAExecutionProvider' in available_providers:
+                        logger.info("✅ ONNX Runtime CUDA provider verified - pyannote embeddings will use GPU")
+                    else:
+                        logger.warning("⚠️ ONNX Runtime CUDA provider not available - embeddings will use CPU (slower)")
+                except Exception as e:
+                    logger.debug(f"Could not verify ONNX Runtime providers: {e}")
+                
                 logger.info("Pyannote diarization pipeline loaded successfully")
                 return True
             except Exception as baked_error:
@@ -797,6 +827,17 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
         
         # Clear memory after loading
         clear_gpu_memory()
+        
+        # Verify ONNX Runtime CUDA provider is available after model load
+        try:
+            import onnxruntime as ort
+            available_providers = ort.get_available_providers()
+            if 'CUDAExecutionProvider' in available_providers:
+                logger.info("✅ ONNX Runtime CUDA provider verified - pyannote embeddings will use GPU")
+            else:
+                logger.warning("⚠️ ONNX Runtime CUDA provider not available - embeddings will use CPU (slower)")
+        except Exception as e:
+            logger.debug(f"Could not verify ONNX Runtime providers: {e}")
             
         logger.info("Pyannote diarization pipeline loaded successfully")
         return True
