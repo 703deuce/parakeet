@@ -743,7 +743,7 @@ def load_diarization_model(hf_token=None, pyannote_version="2.1"):
                 if pyannote_version == "2.1":
                     logger.info("  - https://hf.co/pyannote/segmentation")
                     logger.info("  - https://hf.co/pyannote/speaker-diarization")
-                else:  # 3.0
+                else:  # 3.1
                     logger.info("  - https://hf.co/pyannote/segmentation-3.1")
                     logger.info("  - https://hf.co/pyannote/speaker-diarization-3.1")
                 
