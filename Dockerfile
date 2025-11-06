@@ -79,19 +79,30 @@ ENV HF_HOME=/app/models
 ENV TRANSFORMERS_CACHE=/app/models
 ENV HF_DATASETS_CACHE=/app/models
 
-# Accept HuggingFace token as build argument
-# IMPORTANT: Pass HF_TOKEN during build:
+# Accept HuggingFace token as build argument (OPTIONAL - for pre-downloading models)
+# SECURITY: NEVER commit HF_TOKEN to GitHub! Use secrets/environment variables.
+# 
+# Option 1: Build locally with token (for faster startup):
 #   docker build --build-arg HF_TOKEN=your_token_here .
-# Or if HF_TOKEN is set as environment variable:
-#   docker build --build-arg HF_TOKEN=$HF_TOKEN .
+#
+# Option 2: GitHub Actions (use repository secrets):
+#   In .github/workflows/build.yml: --build-arg HF_TOKEN=${{ secrets.HF_TOKEN }}
+#
+# Option 3: RunPod build (use RunPod secrets):
+#   Set HF_TOKEN in RunPod build settings as a secret
+#
+# Option 4: Skip build-time download (default):
+#   Models will download at runtime (works fine, just slower first request)
 ARG HF_TOKEN
 ENV HF_TOKEN=${HF_TOKEN}
 
-# Download pyannote speaker diarization model during build
-# Note: This requires HF_TOKEN build arg and user must have accepted model terms
-# at https://hf.co/pyannote/segmentation-3.1 and https://hf.co/pyannote/speaker-diarization-3.1
+# Download pyannote speaker diarization model during build (OPTIONAL)
+# If HF_TOKEN is not provided, models will download at runtime instead
+# Note: User must have accepted model terms at:
+#   https://hf.co/pyannote/segmentation-3.1
+#   https://hf.co/pyannote/speaker-diarization-3.1
 RUN if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "" ]; then \
-        echo "📥 Downloading pyannote models with HF_TOKEN..."; \
+        echo "📥 Downloading pyannote models during build (HF_TOKEN provided)..."; \
         python3 -c "\
 from pyannote.audio import Pipeline; \
 import os; \
@@ -101,9 +112,9 @@ pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth
 print('✅ Pyannote model baked into image'); \
 "; \
     else \
-        echo "⚠️ HF_TOKEN not provided during build"; \
-        echo "⚠️ Model will be downloaded at runtime (slower first request)"; \
-        echo "⚠️ To bake model: docker build --build-arg HF_TOKEN=your_token ."; \
+        echo "ℹ️  HF_TOKEN not provided during build (this is OK!)"; \
+        echo "ℹ️  Models will download at runtime when needed (first request may be slower)"; \
+        echo "ℹ️  To pre-download: docker build --build-arg HF_TOKEN=your_token ."; \
     fi
 
 # Download Parakeet model during build (NeMo caches to default location)
