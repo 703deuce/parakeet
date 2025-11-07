@@ -117,6 +117,54 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def notify_runpod_webhook(job: Dict[str, Any], status: str, payload: Dict[str, Any]) -> None:
+    """
+    Notify the caller's webhook (if provided) with job completion status.
+
+    Args:
+        job: The RunPod job dictionary (may contain 'webhook' and 'input').
+        status: Completion status, e.g., "COMPLETED" or "FAILED".
+        payload: Payload to include in the webhook (usually the result or error dict).
+    """
+    if not isinstance(job, dict):
+        return
+
+    webhook_url = job.get("webhook")
+    if not webhook_url:
+        webhook_url = job.get("input", {}).get("webhook") if isinstance(job.get("input"), dict) else None
+
+    if not webhook_url:
+        return
+
+    try:
+        response = requests.post(
+            webhook_url,
+            json={
+                "id": job.get("id"),
+                "status": status,
+                "output": payload,
+                "metadata": job.get("input", {})
+            },
+            timeout=10
+        )
+        response.raise_for_status()
+        logger.info(f"📬 Webhook notified ({status}) at {webhook_url} (status {response.status_code})")
+    except Exception as exc:
+        logger.warning(f"⚠️ Failed to notify webhook {webhook_url}: {exc}")
+
+
+def finalize_success(job: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """Helper to send webhook notification for successful jobs and return result."""
+    notify_runpod_webhook(job, "COMPLETED", result)
+    return result
+
+
+def finalize_error(job: Dict[str, Any], error_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Helper to send webhook notification for failed jobs and return error payload."""
+    notify_runpod_webhook(job, "FAILED", error_payload)
+    return error_payload
+
 # Global classifier for SpeechBrain speaker embeddings
 speaker_embedding_classifier = None
 
@@ -4051,7 +4099,8 @@ def handler(job):
                 try:
                     local_audio_file = download_from_firebase(audio_url)
                     if not local_audio_file:
-                        return {"error": "Failed to download audio from Firebase URL"}
+                        error_payload = {"error": "Failed to download audio from Firebase URL"}
+                        return finalize_error(job, error_payload)
                     
                     # Get file size for logging
                     file_size = os.path.getsize(local_audio_file)
@@ -4079,6 +4128,11 @@ def handler(job):
                         segmentation_params=segmentation_params,
                         clustering_params=clustering_params
                     )
+
+                    if isinstance(result, dict) and result.get("error"):
+                        logger.error(f"❌ Firebase URL workflow returned error: {result.get('error')}")
+                        clear_gpu_memory()
+                        return finalize_error(job, result)
                     
                     # Clean up downloaded file
                     try:
@@ -4100,13 +4154,14 @@ def handler(job):
                     # Clear memory after processing
                     clear_gpu_memory()
                     
-                    return result
+                    return finalize_success(job, result)
                     
                 except Exception as e:
                     logger.error(f"❌ Firebase URL download failed: {str(e)}")
                     # Clear memory on error
                     clear_gpu_memory()
-                    return {"error": f"Failed to download from Firebase URL: {str(e)}"}
+                    error_payload = {"error": f"Failed to download from Firebase URL: {str(e)}"}
+                    return finalize_error(job, error_payload)
             
             # OPTION 2: Legacy base64 mode (limited to 10MiB)
             elif "audio_data" in job_input:
@@ -4126,12 +4181,14 @@ def handler(job):
                 try:
                     audio_bytes = base64.b64decode(audio_data)
                 except Exception as e:
-                    return {"error": f"Invalid base64 audio data: {str(e)}"}
+                    error_payload = {"error": f"Invalid base64 audio data: {str(e)}"}
+                    return finalize_error(job, error_payload)
                     
                 logger.info(f"📦 JSON mode: Received base64 audio data")
                 
             else:
-                return {"error": "Missing required parameter: audio_url or audio_data"}
+                error_payload = {"error": "Missing required parameter: audio_url or audio_data"}
+                return finalize_error(job, error_payload)
             
         else:
             # Raw file upload mode (recommended)
@@ -4152,7 +4209,8 @@ def handler(job):
                 filename = job.get("filename", "audio.wav")
                 audio_format = filename.split('.')[-1].lower() if '.' in filename else "wav"
             else:
-                return {"error": "No audio file provided. Use 'file' parameter for raw upload or 'input.audio_data' for base64"}
+                error_payload = {"error": "No audio file provided. Use 'file' parameter for raw upload or 'input.audio_data' for base64"}
+                return finalize_error(job, error_payload)
         
         # Streaming mode parameters (Parakeet v3 feature)
         streaming_mode = job.get("streaming_mode", False)
@@ -4242,11 +4300,13 @@ def handler(job):
                 if use_diarization and hf_token and diarization_model is None:
                     logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
                     if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
-                        return {"error": "Failed to load diarization model with provided HF token"}
+                        error_payload = {"error": "Failed to load diarization model with provided HF token"}
+                        return finalize_error(job, error_payload)
                 elif use_diarization and diarization_model is None:
                     logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
                     if not load_diarization_model(pyannote_version=pyannote_version):
-                        return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                        error_payload = {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                        return finalize_error(job, error_payload)
                 
                 # Process the audio file directly
                 if use_diarization:
@@ -4263,6 +4323,11 @@ def handler(job):
                         include_timestamps=include_timestamps
                     )
                 
+                if isinstance(result, dict) and result.get("error"):
+                    logger.error(f"❌ Direct Firebase processing returned error: {result.get('error')}")
+                    clear_gpu_memory()
+                    return finalize_error(job, result)
+
                 # Clean up temporary file
                 try:
                     os.unlink(local_audio_file)
@@ -4285,11 +4350,12 @@ def handler(job):
                 # Clear memory after processing
                 clear_gpu_memory()
                 
-                return result
+                return finalize_success(job, result)
                 
             except Exception as e:
                 logger.error(f"❌ DIRECT Firebase workflow failed: {str(e)}")
-                return {"error": f"Direct Firebase processing failed: {str(e)}"}
+                error_payload = {"error": f"Direct Firebase processing failed: {str(e)}"}
+                return finalize_error(job, error_payload)
         
         else:
             logger.info(f"📦 Using legacy chunking workflow (file size: {file_size_mb:.1f}MB)")
@@ -4320,11 +4386,13 @@ def handler(job):
             if use_diarization and hf_token and diarization_model is None:
                 logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
                 if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
-                    return {"error": "Failed to load diarization model with provided HF token"}
+                    error_payload = {"error": "Failed to load diarization model with provided HF token"}
+                    return finalize_error(job, error_payload)
             elif use_diarization and diarization_model is None:
                 logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
                 if not load_diarization_model(pyannote_version=pyannote_version):
-                    return {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                    error_payload = {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                    return finalize_error(job, error_payload)
             
             temp_files_to_cleanup = [temp_audio_file.name]
             
@@ -4334,13 +4402,14 @@ def handler(job):
                 logger.info("⚠️ Legacy chunking mode - consider using Firebase for better performance")
                 
                 # For now, return a simplified response indicating chunking mode
-                return {
+                error_payload = {
                     "error": "Legacy chunking mode temporarily disabled - please use firebase_upload=true for optimal processing",
                     "firebase_upload_used": False,
                     "original_file_size_mb": file_size_mb,
                     "processing_decision": "legacy_chunking_disabled",
                     "recommendation": "Set firebase_upload=true in your request for better performance"
                 }
+                return finalize_error(job, error_payload)
             
             finally:
                 # Clean up temporary files
@@ -4348,7 +4417,8 @@ def handler(job):
                 
     except Exception as e:
         logger.error(f"Error in handler: {str(e)}")
-        return {"error": f"Transcription failed: {str(e)}"}
+        error_payload = {"error": f"Transcription failed: {str(e)}"}
+        return finalize_error(job, error_payload)
 
 # Initialize model when the container starts
 if __name__ == "__main__":
