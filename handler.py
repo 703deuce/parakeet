@@ -1021,10 +1021,14 @@ def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                                 min_speakers: int = None, max_speakers: int = None,
                                 segmentation_params: Dict[str, Any] = None,
-                                clustering_params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+                                clustering_params: Dict[str, Any] = None,
+                                extract_embeddings: bool = False) -> List[Dict[str, Any]]:
     """
     Perform speaker diarization on audio file using pyannote.audio
     Returns list of segments with speaker labels and timestamps
+    
+    Args:
+        extract_embeddings: If True, extract speaker embeddings (slow, only needed for chunking)
     """
     try:
         logger.info(f"Performing pyannote.audio speaker diarization on: {audio_path}")
@@ -1280,8 +1284,8 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 torch.backends.cudnn.allow_tf32 = True
                 logger.info("✅ TF32 re-enabled after diarization pipeline execution")
             
-            # Convert pyannote output to our format with speaker embeddings
-            speaker_embeddings = {}  # Store embeddings per speaker
+            # Convert pyannote output to our format
+            speaker_embeddings = {}  # Store embeddings per speaker (only if extract_embeddings=True)
         
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 segment_duration = turn.end - turn.start
@@ -1289,18 +1293,19 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 # Keep all segments - we need complete speaker coverage for all words
                 # Short segments are still valuable for word-level speaker assignment
                 
-                # Extract speaker embedding for this segment
-                try:
-                    # Get the embedding from pyannote's internal representation
-                    if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
-                        # Try to extract embedding from the diarization result
-                        embedding = extract_speaker_embedding(mono_audio_path, turn.start, turn.end)
-                        if embedding is not None:
-                            if speaker not in speaker_embeddings:
-                                speaker_embeddings[speaker] = []
-                            speaker_embeddings[speaker].append(embedding)
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
+                # Extract speaker embedding for this segment (ONLY if needed for chunking)
+                if extract_embeddings:
+                    try:
+                        # Get the embedding from pyannote's internal representation
+                        if hasattr(diarization, 'get_timeline') and hasattr(diarization, 'get_labels'):
+                            # Try to extract embedding from the diarization result
+                            embedding = extract_speaker_embedding(mono_audio_path, turn.start, turn.end)
+                            if embedding is not None:
+                                if speaker not in speaker_embeddings:
+                                    speaker_embeddings[speaker] = []
+                                speaker_embeddings[speaker].append(embedding)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not extract embedding for {speaker}: {e}")
                 
                 segments.append({
                     'start': turn.start,
@@ -1311,20 +1316,21 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 # Removed verbose per-segment logging - too slow for long files
                 # Summary logged at end instead
             
-            # Average embeddings per speaker for better representation
-            for speaker, embeddings_list in speaker_embeddings.items():
-                if len(embeddings_list) > 1:
-                    # Average multiple embeddings for this speaker
-                    import numpy as np
-                    avg_embedding = np.mean(embeddings_list, axis=0)
-                    speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
-                    # Removed verbose embedding logging - not critical for performance
-            
-            # Store embeddings in segments for later use
-            for segment in segments:
-                speaker = segment['speaker']
-                if speaker in speaker_embeddings and speaker_embeddings[speaker]:
-                    segment['speaker_embedding'] = speaker_embeddings[speaker][0]
+            # Average embeddings per speaker for better representation (only if extracted)
+            if extract_embeddings and speaker_embeddings:
+                for speaker, embeddings_list in speaker_embeddings.items():
+                    if len(embeddings_list) > 1:
+                        # Average multiple embeddings for this speaker
+                        import numpy as np
+                        avg_embedding = np.mean(embeddings_list, axis=0)
+                        speaker_embeddings[speaker] = [avg_embedding]  # Replace with averaged embedding
+                        # Removed verbose embedding logging - not critical for performance
+                
+                # Store embeddings in segments for later use
+                for segment in segments:
+                    speaker = segment['speaker']
+                    if speaker in speaker_embeddings and speaker_embeddings[speaker]:
+                        segment['speaker_embedding'] = speaker_embeddings[speaker][0]
             
             # Summary logging (replaces verbose per-segment logging)
             logger.info(f"✅ Pyannote diarization completed: {len(segments)} segments found")
