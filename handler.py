@@ -1819,12 +1819,19 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # CRITICAL: Disable VAD to prevent Parakeet from skipping sections
-            # By default, NeMo models have VAD that can skip music/unclear audio
+            # CRITICAL: Use aggressive VAD to prevent Parakeet from skipping sections
+            # By default, NeMo models have VAD (threshold ~0.5) that skips music/unclear audio
             # This causes 10-second gaps in word timestamps
-            # Setting vad_stream_config to None forces transcription of entire file
-            transcribe_params['vad_stream_config'] = None
-            logger.info(f"🎤 VAD disabled - Parakeet will transcribe entire audio file (no gaps)")
+            # Lower threshold (0.3) catches speech over music while still filtering pure silence
+            transcribe_params['vad_stream_config'] = {
+                'threshold': 0.3,              # Much lower than default (0.5) - catches speech over music
+                'min_speech_duration_ms': 100, # Catch short utterances
+                'min_silence_duration_ms': 100, # Small gaps treated as continuous
+                'pad_onset_ms': 300,           # Extra padding before speech starts
+                'pad_offset_ms': 300,          # Extra padding after speech ends
+                'window_size_samples': 512
+            }
+            logger.info(f"🎤 Aggressive VAD (threshold=0.3) - catches speech over music while filtering silence")
             
             # Transcribe with parameters
             if transcribe_params:
