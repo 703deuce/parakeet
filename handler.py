@@ -3318,10 +3318,32 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     current_time_offset = 0
                     
             else:
-                # Subsequent chunks - map speakers and adjust timestamps
-                logger.info(f"🔗 Mapping speakers for chunk {i+1}...")
+                # Subsequent chunks - TRIM OVERLAP then map speakers and adjust timestamps
+                logger.info(f"🔗 Processing chunk {i+1} - trimming {overlap_duration}s overlap...")
                 
-                # Find speakers in current chunk
+                # STEP 1: Trim overlapping portions from this chunk (keep only data AFTER overlap_duration)
+                # This prevents duplicates at the source rather than trying to clean them up later
+                chunk_diarized = [
+                    seg for seg in chunk_diarized
+                    if seg.get("start_time", seg.get("start", 0)) >= overlap_duration
+                ]
+                chunk_word_timestamps = [
+                    word for word in chunk_word_timestamps
+                    if word.get("start", 0) >= overlap_duration
+                ]
+                chunk_segment_timestamps = [
+                    seg for seg in chunk_segment_timestamps
+                    if seg.get("start", seg.get("start_time", 0)) >= overlap_duration
+                ]
+                chunk_char_timestamps = [
+                    char for char in chunk_char_timestamps
+                    if char.get("start", 0) >= overlap_duration
+                ]
+                
+                logger.info(f"✂️ Trimmed chunk {i+1}: kept {len(chunk_word_timestamps)} words, "
+                           f"{len(chunk_diarized)} diarized segments (after {overlap_duration}s)")
+                
+                # STEP 2: Find speakers in trimmed chunk
                 chunk_speakers = set(seg.get("speaker", "") for seg in chunk_diarized if seg.get("speaker"))
                 
                 # Map chunk speakers to global speakers using overlap analysis
@@ -3335,7 +3357,7 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     if global_speaker not in global_speaker_map.values():
                         global_speaker_counter += 1
                 
-                # Apply speaker mapping to current chunk
+                # STEP 3: Apply speaker mapping to trimmed chunk
                 mapped_diarized = []
                 for segment in chunk_diarized:
                     mapped_segment = segment.copy()
@@ -3343,38 +3365,35 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                         mapped_segment["speaker"] = chunk_speaker_map[mapped_segment["speaker"]]
                     mapped_diarized.append(mapped_segment)
                 
-                # Calculate time offset once
-                time_offset = current_time_offset - overlap_duration
+                # STEP 4: Calculate time offset (no need to subtract overlap since we already trimmed)
+                time_offset = current_time_offset
                 
-                # Adjust timestamps and merge (optimized with list comprehensions)
+                # STEP 5: Adjust timestamps and merge trimmed data
                 merged_result["diarized_transcript"].extend([
                     {**seg, 
-                     "start_time": seg.get("start_time", 0) + time_offset,
-                     "end_time": seg.get("end_time", 0) + time_offset}
+                     "start_time": seg.get("start_time", 0) + time_offset - overlap_duration,
+                     "end_time": seg.get("end_time", 0) + time_offset - overlap_duration}
                     for seg in mapped_diarized
                 ])
                 
-                # Adjust word timestamps (optimized)
                 merged_result["word_timestamps"].extend([
                     {**word, 
-                     "start": word.get("start", 0) + time_offset,
-                     "end": word.get("end", 0) + time_offset}
+                     "start": word.get("start", 0) + time_offset - overlap_duration,
+                     "end": word.get("end", 0) + time_offset - overlap_duration}
                     for word in chunk_word_timestamps
                 ])
                 
-                # Adjust segment timestamps (optimized)
                 merged_result["segment_timestamps"].extend([
                     {**seg, 
-                     "start": seg.get("start", 0) + time_offset,
-                     "end": seg.get("end", 0) + time_offset}
+                     "start": seg.get("start", 0) + time_offset - overlap_duration,
+                     "end": seg.get("end", 0) + time_offset - overlap_duration}
                     for seg in chunk_segment_timestamps
                 ])
                 
-                # Adjust char timestamps (optimized)
                 merged_result["char_timestamps"].extend([
                     {**char, 
-                     "start": char.get("start", 0) + time_offset,
-                     "end": char.get("end", 0) + time_offset}
+                     "start": char.get("start", 0) + time_offset - overlap_duration,
+                     "end": char.get("end", 0) + time_offset - overlap_duration}
                     for char in chunk_char_timestamps
                 ])
                 
@@ -3394,38 +3413,31 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
         # Clean up merged result
         merged_result["transcript"] = merged_result["transcript"].strip()
 
-        if merged_result["diarized_transcript"]:
-            merged_result["diarized_transcript"] = deduplicate_overlapping_text(
-                merged_result["diarized_transcript"],
-                overlap_duration=float(overlap_duration)
-            )
-
-        if merged_result["segment_timestamps"]:
-            merged_result["segment_timestamps"] = deduplicate_overlapping_text(
-                merged_result["segment_timestamps"],
-                overlap_duration=float(overlap_duration)
-            )
-
+        # Rebuild transcript from merged segments to ensure consistency
+        # Note: No need for fuzzy deduplication since we trimmed overlaps at source
         if merged_result["diarized_transcript"]:
             merged_result["transcript"] = " ".join(
                 seg.get("text", "").strip()
                 for seg in merged_result["diarized_transcript"]
                 if seg.get("text")
             ).strip()
+            logger.info(f"📝 Rebuilt transcript from {len(merged_result['diarized_transcript'])} diarized segments")
 
-        if not merged_result["transcript"] and merged_result["segment_timestamps"]:
+        elif merged_result["segment_timestamps"]:
             merged_result["transcript"] = " ".join(
                 seg.get("text", "").strip()
                 for seg in merged_result["segment_timestamps"]
                 if seg.get("text")
             ).strip()
+            logger.info(f"📝 Rebuilt transcript from {len(merged_result['segment_timestamps'])} segment timestamps")
 
-        if not merged_result["transcript"] and merged_result["word_timestamps"]:
+        elif merged_result["word_timestamps"]:
             merged_result["transcript"] = " ".join(
                 word.get("word", "").strip()
                 for word in merged_result["word_timestamps"]
                 if word.get("word")
             ).strip()
+            logger.info(f"📝 Rebuilt transcript from {len(merged_result['word_timestamps'])} word timestamps")
 
         merged_result["transcript"] = merged_result["transcript"] or ""
         logger.info(
