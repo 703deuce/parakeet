@@ -3400,12 +3400,38 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                 overlap_duration=float(overlap_duration)
             )
 
-            # Rebuild transcript from deduplicated segments to keep text aligned
+        if merged_result["segment_timestamps"]:
+            merged_result["segment_timestamps"] = deduplicate_overlapping_text(
+                merged_result["segment_timestamps"],
+                overlap_duration=float(overlap_duration)
+            )
+
+        if merged_result["diarized_transcript"]:
             merged_result["transcript"] = " ".join(
                 seg.get("text", "").strip()
                 for seg in merged_result["diarized_transcript"]
                 if seg.get("text")
-            ).strip() or merged_result["transcript"]
+            ).strip()
+
+        if not merged_result["transcript"] and merged_result["segment_timestamps"]:
+            merged_result["transcript"] = " ".join(
+                seg.get("text", "").strip()
+                for seg in merged_result["segment_timestamps"]
+                if seg.get("text")
+            ).strip()
+
+        if not merged_result["transcript"] and merged_result["word_timestamps"]:
+            merged_result["transcript"] = " ".join(
+                word.get("word", "").strip()
+                for word in merged_result["word_timestamps"]
+                if word.get("word")
+            ).strip()
+
+        merged_result["transcript"] = merged_result["transcript"] or ""
+        logger.info(
+            f"🎯 Final merged transcript: {len(merged_result['transcript'])} chars, "
+            f"{len(merged_result['transcript'].split()) if merged_result['transcript'] else 0} words"
+        )
         
         # Calculate final statistics
         total_duration = current_time_offset
