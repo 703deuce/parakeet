@@ -2229,7 +2229,8 @@ def fill_transcript_gaps_with_parakeet(
             logger.info(f"✅ No significant gaps found (>{min_gap_seconds}s)")
             return transcription_result
         
-        logger.info(f"🔍 Found {len(gaps)} gaps to fill: {[f'{g[\"duration\"]:.1f}s' for g in gaps]}")
+        gap_durations = [f"{g['duration']:.1f}s" for g in gaps]
+        logger.info(f"🔍 Found {len(gaps)} gaps to fill: {gap_durations}")
         
         # Step 2: Load full audio once
         try:
