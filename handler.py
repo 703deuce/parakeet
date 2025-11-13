@@ -2154,6 +2154,17 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         }
         
         logger.info(f"✅ Transcription successful: {len(text_content)} chars, {len(word_timestamps)} words, {len(segment_timestamps)} segments")
+        
+        # Fill any gaps in the transcription (≥2 seconds)
+        if word_timestamps:
+            logger.info("🔍 Checking for gaps in transcription...")
+            result = fill_transcript_gaps_with_parakeet(
+                transcription_result=result,
+                audio_path=mono_audio_path,
+                min_gap_seconds=2.0,  # Only fill gaps ≥ 2 seconds
+                gap_padding_seconds=0.5  # Include 0.5s context before/after
+            )
+        
         return result
         
     except Exception as e:
@@ -2167,6 +2178,183 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             'char_timestamps': [],
             'error': str(e)
         }
+
+def fill_transcript_gaps_with_parakeet(
+    transcription_result: dict,
+    audio_path: str,
+    min_gap_seconds: float = 2.0,
+    gap_padding_seconds: float = 0.5
+) -> dict:
+    """
+    Detect gaps in transcription timestamps and re-transcribe using Parakeet
+    
+    Args:
+        transcription_result: Original Parakeet output with timestamps
+        audio_path: Path to original audio file
+        min_gap_seconds: Minimum gap size to attempt filling (default 2s)
+        gap_padding_seconds: Extra audio to include before/after gap (default 0.5s)
+    
+    Returns:
+        Updated transcription result with filled gaps
+    """
+    try:
+        import librosa
+        import soundfile as sf
+        import tempfile
+        
+        timestamps = transcription_result.get('word_timestamps', [])
+        if not timestamps or len(timestamps) < 2:
+            logger.info("✅ No timestamps to check for gaps")
+            return transcription_result
+        
+        # Step 1: Find all significant gaps
+        gaps = []
+        for i in range(len(timestamps) - 1):
+            current_word = timestamps[i]
+            next_word = timestamps[i + 1]
+            
+            current_end = current_word.get('end', current_word.get('end_time', 0))
+            next_start = next_word.get('start', next_word.get('start_time', 0))
+            gap_duration = next_start - current_end
+            
+            if gap_duration >= min_gap_seconds:
+                gaps.append({
+                    'start': current_end,
+                    'end': next_start,
+                    'duration': gap_duration,
+                    'insert_after_index': i
+                })
+        
+        if not gaps:
+            logger.info(f"✅ No significant gaps found (>{min_gap_seconds}s)")
+            return transcription_result
+        
+        logger.info(f"🔍 Found {len(gaps)} gaps to fill: {[f'{g[\"duration\"]:.1f}s' for g in gaps]}")
+        
+        # Step 2: Load full audio once
+        try:
+            audio, sr = librosa.load(audio_path, sr=16000, mono=True)
+            total_duration = len(audio) / sr
+        except Exception as e:
+            logger.error(f"❌ Could not load audio for gap filling: {e}")
+            return transcription_result
+        
+        # Step 3: Re-transcribe each gap
+        filled_segments = []
+        for gap_idx, gap in enumerate(gaps):
+            # Add padding for context
+            extract_start = max(0, gap['start'] - gap_padding_seconds)
+            extract_end = min(total_duration, gap['end'] + gap_padding_seconds)
+            
+            # Extract audio segment
+            start_sample = int(extract_start * sr)
+            end_sample = int(extract_end * sr)
+            gap_audio = audio[start_sample:end_sample]
+            
+            # Save to temp file
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                    sf.write(tmp.name, gap_audio, sr)
+                    tmp_path = tmp.name
+                
+                logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
+                           f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
+                
+                # Re-transcribe with Parakeet using the loaded model
+                gap_result = model.transcribe(
+                    [tmp_path],
+                    timestamps=True,
+                    preserve_alignments=True
+                )
+                
+                # Process result
+                if gap_result and len(gap_result) > 0:
+                    first_result = gap_result[0]
+                    gap_word_timestamps = []
+                    
+                    # Try to extract word timestamps from result
+                    if hasattr(first_result, 'timestamp') and first_result.timestamp:
+                        if 'word' in first_result.timestamp:
+                            gap_word_timestamps = first_result.timestamp['word']
+                    
+                    if not gap_word_timestamps and hasattr(first_result, '__getitem__'):
+                        gap_word_timestamps = first_result.get('word_timestamps', [])
+                    
+                    # Adjust timestamps to match original audio position
+                    for word_data in gap_word_timestamps:
+                        if 'start' in word_data:
+                            word_data['start'] += extract_start
+                        if 'end' in word_data:
+                            word_data['end'] += extract_start
+                        if 'start_time' in word_data:
+                            word_data['start_time'] += extract_start
+                        if 'end_time' in word_data:
+                            word_data['end_time'] += extract_start
+                    
+                    # Only keep words that fall within the actual gap
+                    gap_words = []
+                    for w in gap_word_timestamps:
+                        w_start = w.get('start', w.get('start_time', 0))
+                        w_end = w.get('end', w.get('end_time', 0))
+                        if gap['start'] <= w_start <= gap['end'] or gap['start'] <= w_end <= gap['end']:
+                            gap_words.append(w)
+                    
+                    if gap_words:
+                        logger.info(f"✅ Filled gap with {len(gap_words)} words: "
+                                   f"\"{' '.join([w.get('word', w.get('text', '')) for w in gap_words[:5]])}...\"")
+                        filled_segments.append({
+                            'gap': gap,
+                            'words': gap_words
+                        })
+                    else:
+                        logger.warning(f"⚠️ Gap re-transcription returned no words in range")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to fill gap: {e}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except:
+                        pass
+        
+        # Step 4: Merge filled segments back into original result
+        if filled_segments:
+            new_timestamps = timestamps.copy()
+            
+            # Insert filled words at correct positions (reverse order to maintain indices)
+            for seg in reversed(filled_segments):
+                insert_idx = seg['gap']['insert_after_index'] + 1
+                new_timestamps[insert_idx:insert_idx] = seg['words']
+            
+            transcription_result['word_timestamps'] = new_timestamps
+            
+            # Update text if present
+            if 'text' in transcription_result or 'transcript' in transcription_result:
+                all_words = []
+                for w in new_timestamps:
+                    word = w.get('word', w.get('text', ''))
+                    if word:
+                        all_words.append(word)
+                updated_text = ' '.join(all_words)
+                if 'text' in transcription_result:
+                    transcription_result['text'] = updated_text
+                if 'transcript' in transcription_result:
+                    transcription_result['transcript'] = updated_text
+            
+            logger.info(f"✅ Filled {len(filled_segments)} gaps, total words: "
+                       f"{len(timestamps)} → {len(new_timestamps)}")
+        else:
+            logger.warning("⚠️ Could not fill any gaps")
+        
+        return transcription_result
+        
+    except Exception as e:
+        logger.error(f"❌ Error in gap filling: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return transcription_result
 
 def merge_smart_transcription_results(chunk_results: List[Dict[str, Any]], chunk_times: List[Tuple[float, float]]) -> Dict[str, Any]:
     """Merge transcription results from smart chunks with accurate timing"""
