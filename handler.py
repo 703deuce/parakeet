@@ -1988,15 +1988,15 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 logger.info(f"📊 RAW text length: {len(raw_text)} chars, {len(raw_text.split()) if raw_text else 0} words")
                 logger.info(f"📊 RAW text preview (first 500 chars): {raw_text[:500] if raw_text else 'NO TEXT'}")
                 logger.info("=" * 80)
-        finally:
-            # Clean up temporary mono file if created
+        except Exception as transcribe_error:
+            # Clean up on error
             for temp_file in temp_files_to_cleanup:
                 try:
                     if os.path.exists(temp_file):
                         os.unlink(temp_file)
-                        logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
-                except Exception as cleanup_error:
-                    logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
+                except:
+                    pass
+            raise transcribe_error
         
         # 🔧 SAFE KEY ACCESS - Try multiple ways to get text and timestamps
         first_result = output[0]
@@ -2164,6 +2164,15 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 min_gap_seconds=2.0,  # Only fill gaps ≥ 2 seconds
                 gap_padding_seconds=0.5  # Include 0.5s context before/after
             )
+        
+        # Clean up temporary mono file AFTER gap filling (needs the file to exist)
+        for temp_file in temp_files_to_cleanup:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.info(f"🧹 Cleaned up temporary mono file: {temp_file}")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Could not clean up temporary file {temp_file}: {cleanup_error}")
         
         return result
         
