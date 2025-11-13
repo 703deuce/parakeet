@@ -2155,13 +2155,13 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
         
         logger.info(f"✅ Transcription successful: {len(text_content)} chars, {len(word_timestamps)} words, {len(segment_timestamps)} segments")
         
-        # Fill any gaps in the transcription (≥2 seconds)
+        # Fill any gaps in the transcription (≥1.5 seconds)
         if word_timestamps:
             logger.info("🔍 Checking for gaps in transcription...")
             result = fill_transcript_gaps_with_parakeet(
                 transcription_result=result,
                 audio_path=mono_audio_path,
-                min_gap_seconds=2.0,  # Only fill gaps ≥ 2 seconds
+                min_gap_seconds=1.5,  # Fill gaps ≥ 1.5 seconds (catches more gaps)
                 gap_padding_seconds=0.5  # Include 0.5s context before/after
             )
         
