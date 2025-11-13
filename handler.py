@@ -1032,14 +1032,13 @@ def deduplicate_overlapping_text(segments: List[Dict[str, Any]], overlap_duratio
     if not segments or len(segments) <= 1:
         return segments
 
-    # Normalize ordering by start timestamp
     sorted_segments = sorted(
         segments,
         key=lambda s: s.get("start", s.get("start_time", 0.0))
     )
 
     deduplicated: List[Dict[str, Any]] = []
-    seen_text_windows: Dict[float, str] = {}
+    seen_texts: Dict[str, float] = {}
 
     for seg in sorted_segments:
         seg_start = seg.get("start", seg.get("start_time", 0.0))
@@ -1048,23 +1047,30 @@ def deduplicate_overlapping_text(segments: List[Dict[str, Any]], overlap_duratio
         if not seg_text:
             continue
 
-        text_sig = seg_text[:50].lower()
+        normalized_text = " ".join(seg_text.lower().split())
         is_duplicate = False
 
-        # Copy keys to avoid runtime modification while iterating
-        for prev_time in list(seen_text_windows.keys()):
-            prev_sig = seen_text_windows[prev_time]
+        for prev_text, prev_time in list(seen_texts.items()):
+            if abs(seg_start - prev_time) < overlap_duration:
+                if normalized_text == prev_text:
+                    is_duplicate = True
+                    break
 
-            if abs(seg_start - prev_time) < overlap_duration and prev_sig == text_sig:
-                is_duplicate = True
-                break
+                if len(normalized_text) > 20:
+                    words_current = set(normalized_text.split())
+                    words_prev = set(prev_text.split())
+                    if words_prev:
+                        similarity = len(words_current & words_prev) / max(len(words_current), len(words_prev))
+                        if similarity > 0.9:
+                            is_duplicate = True
+                            break
 
             if seg_start - prev_time > overlap_duration * 2:
-                del seen_text_windows[prev_time]
+                del seen_texts[prev_text]
 
         if not is_duplicate:
             deduplicated.append(seg)
-            seen_text_windows[seg_start] = text_sig
+            seen_texts[normalized_text] = seg_start
 
     logger.info(
         f"🧹 Deduplication: {len(sorted_segments)} → {len(deduplicated)} segments "
