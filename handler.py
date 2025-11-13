@@ -2111,29 +2111,14 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # VAD Configuration: Enabled with optimal threshold for clean output
-            # Filters breaths/silence that cause hallucinations while keeping all speech
-            # Optimal threshold: 0.35 (catches all speech, filters breaths that cause hallucinations)
-            use_vad = True  # Enabled for both regular transcription and gap-filling
-            
-            if use_vad:
-                # OPTIMAL VAD SETTINGS: Threshold 0.35 = sweet spot
-                # - Catches all speech including whispers (99%+)
-                # - Filters breaths and silence that cause hallucinations
-                # - Prevents "Aaron Powell Jr." type artifacts
-                transcribe_params['vad_stream_config'] = {
-                    'threshold': 0.35,              # Optimal: catches speech, filters breaths
-                    'min_speech_duration_ms': 150,  # Catch brief utterances (0.15s)
-                    'min_silence_duration_ms': 400, # 0.4s silence needed to split
-                    'pad_onset_ms': 200,            # 200ms padding before speech
-                    'pad_offset_ms': 200,           # 200ms padding after speech
-                    'window_size_samples': 512      # Smaller window = more sensitive
-                }
-                logger.info("🎤 VAD enabled with optimal threshold=0.35 (filters breaths, keeps all speech)")
-            else:
-                # Default: Process full audio to ensure no missing segments
-                # Gap filling (0.5s threshold) handles any actual gaps
-                logger.info("🎤 VAD disabled - processing full audio to avoid missing segments")
+            # VAD Configuration: DISABLED for Parakeet
+            # NOTE: Parakeet (EncDecRNNTModel) doesn't support vad_stream_config parameter
+            # That's a Whisper-specific parameter. Parakeet has its own internal VAD.
+            # Instead, we rely on:
+            # 1. Parakeet's built-in confidence filtering (already configured to 0.0)
+            # 2. Gap-filling function (0.5s threshold) to catch any missing segments
+            # 3. Dynamic trim points for sentence-aware chunk boundaries
+            logger.info("🎤 Using Parakeet's native processing (vad_stream_config not supported)")
             
             # Transcribe with parameters
             if transcribe_params:
@@ -2469,20 +2454,14 @@ def fill_transcript_gaps_with_parakeet(
                 logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
                            f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
-                # Re-transcribe with Parakeet using the loaded model (batch_size=1 + VAD for max quality)
-                gap_transcribe_params = {
-                    'batch_size': 1,  # Maximum quality
-                    'timestamps': True,
-                    'vad_stream_config': {
-                        'threshold': 0.35,              # Optimal: filters breaths, keeps speech
-                        'min_speech_duration_ms': 150,
-                        'min_silence_duration_ms': 400,
-                        'pad_onset_ms': 200,
-                        'pad_offset_ms': 200,
-                        'window_size_samples': 512
-                    }
-                }
-                gap_result = model.transcribe([tmp_path], **gap_transcribe_params)
+                # Re-transcribe with Parakeet using the loaded model
+                # NOTE: Parakeet (EncDecRNNTModel) doesn't support vad_stream_config (that's Whisper-specific)
+                # Use Parakeet's native parameters for maximum quality
+                gap_result = model.transcribe(
+                    [tmp_path],              # List format (Parakeet requirement)
+                    batch_size=1,            # Maximum quality for gap filling
+                    return_hypotheses=False  # Get final text only
+                )
                 
                 # Process result
                 if gap_result and len(gap_result) > 0:
