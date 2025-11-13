@@ -2274,8 +2274,7 @@ def fill_transcript_gaps_with_parakeet(
                 # Re-transcribe with Parakeet using the loaded model
                 gap_result = model.transcribe(
                     [tmp_path],
-                    timestamps=True,
-                    preserve_alignments=True
+                    timestamps=True
                 )
                 
                 # Process result
