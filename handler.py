@@ -1836,6 +1836,31 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             logger.error("❌ Parakeet model is not loaded!")
             return {"error": "Model not loaded"}
         
+        # CRITICAL: Configure model to accept low-confidence predictions
+        # This prevents missing segments during overlapping speech or background noise
+        try:
+            if hasattr(model, 'cfg'):
+                logger.info("🔧 Configuring model to accept low-confidence predictions...")
+                
+                # Disable confidence thresholding in decoding config
+                if hasattr(model.cfg, 'decoding'):
+                    if hasattr(model.cfg.decoding, 'confidence_threshold'):
+                        original_conf = getattr(model.cfg.decoding, 'confidence_threshold', None)
+                        model.cfg.decoding.confidence_threshold = 0.0
+                        logger.info(f"✅ Set model decoding.confidence_threshold: {original_conf} → 0.0")
+                    
+                    if hasattr(model.cfg.decoding, 'return_best_hypothesis'):
+                        model.cfg.decoding.return_best_hypothesis = True
+                        logger.info("✅ Set model decoding.return_best_hypothesis = True")
+                
+                # Adjust preprocessor for mixed audio (speech + background)
+                if hasattr(model.cfg, 'preprocessor'):
+                    if hasattr(model.cfg.preprocessor, 'normalize'):
+                        model.cfg.preprocessor.normalize = 'per_feature'
+                        logger.info("✅ Set preprocessor.normalize = 'per_feature' (better for mixed audio)")
+        except Exception as config_error:
+            logger.warning(f"⚠️ Could not modify model config: {config_error}")
+        
         # Ensure audio is mono before transcription
         mono_audio_path = ensure_mono_audio(audio_path)
         temp_files_to_cleanup = []
@@ -1859,6 +1884,27 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                     'return_segment_time_offsets': True,
                     'compute_timestamps': True
                 })
+            
+            # CRITICAL: Force Parakeet to output ALL predictions, even low-confidence ones
+            # This prevents missing segments during overlapping speech or background noise
+            transcribe_params.update({
+                'return_hypotheses': False,  # We want the best path, not alternatives
+                'preserve_alignments': True,  # Keep all alignment information
+            })
+            
+            # Try to set confidence thresholds (parameter names vary by NeMo version)
+            # These prevent Parakeet from filtering out low-confidence words
+            try:
+                transcribe_params['confidence_threshold'] = 0.0  # Accept any confidence
+                logger.info("🎯 Set confidence_threshold=0.0 to accept all predictions")
+            except:
+                pass
+            
+            try:
+                transcribe_params['logprob_threshold'] = -1000.0  # Very low threshold
+                logger.info("🎯 Set logprob_threshold=-1000.0 to accept low-confidence words")
+            except:
+                pass
             
             # Add accuracy settings if provided
             if batch_size is not None:
@@ -1906,6 +1952,42 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 output = model.transcribe([mono_audio_path], timestamps=True)
             else:
                 output = model.transcribe([mono_audio_path])
+            
+            # 🔍 DEBUG: Log RAW Parakeet output BEFORE any processing
+            logger.info("=" * 80)
+            logger.info("🔍 RAW PARAKEET OUTPUT (before any processing)")
+            logger.info("=" * 80)
+            if output and len(output) > 0:
+                first_result = output[0]
+                # Try to extract timestamp data in various formats
+                raw_word_count = 0
+                raw_segment_count = 0
+                
+                # Check for timestamps in various possible formats
+                if hasattr(first_result, 'timestamp') and first_result.timestamp:
+                    if 'word' in first_result.timestamp:
+                        raw_word_count = len(first_result.timestamp['word'])
+                        logger.info(f"📊 RAW word timestamps: {raw_word_count} words")
+                        # Log first 20 words with timestamps
+                        for i, word_data in enumerate(first_result.timestamp['word'][:20]):
+                            logger.info(f"  Word {i}: {word_data}")
+                    if 'segment' in first_result.timestamp:
+                        raw_segment_count = len(first_result.timestamp['segment'])
+                        logger.info(f"📊 RAW segment timestamps: {raw_segment_count} segments")
+                        # Log all segments
+                        for i, seg_data in enumerate(first_result.timestamp['segment']):
+                            logger.info(f"  Segment {i}: {seg_data}")
+                
+                # Check if output has text
+                raw_text = ""
+                if hasattr(first_result, 'text'):
+                    raw_text = first_result.text
+                elif hasattr(first_result, '__getitem__') and 'text' in first_result:
+                    raw_text = first_result['text']
+                
+                logger.info(f"📊 RAW text length: {len(raw_text)} chars, {len(raw_text.split()) if raw_text else 0} words")
+                logger.info(f"📊 RAW text preview (first 500 chars): {raw_text[:500] if raw_text else 'NO TEXT'}")
+                logger.info("=" * 80)
         finally:
             # Clean up temporary mono file if created
             for temp_file in temp_files_to_cleanup:
@@ -3321,8 +3403,31 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                 # Subsequent chunks - TRIM OVERLAP then map speakers and adjust timestamps
                 logger.info(f"🔗 Processing chunk {i+1} - trimming {overlap_duration}s overlap...")
                 
+                # 🔍 DEBUG: Log BEFORE trimming
+                logger.info("=" * 80)
+                logger.info(f"🔍 CHUNK {i+1} BEFORE TRIMMING")
+                logger.info("=" * 80)
+                logger.info(f"📊 Words BEFORE trim: {len(chunk_word_timestamps)}")
+                logger.info(f"📊 Diarized segments BEFORE trim: {len(chunk_diarized)}")
+                logger.info(f"📊 Segment timestamps BEFORE trim: {len(chunk_segment_timestamps)}")
+                
+                # Show first few words with their timestamps
+                for idx, word in enumerate(chunk_word_timestamps[:10]):
+                    logger.info(f"  Word {idx} (before trim): start={word.get('start', 0):.2f}s, word='{word.get('word', '')}'")
+                
+                # Show timestamp range
+                if chunk_word_timestamps:
+                    min_time = min(w.get('start', 0) for w in chunk_word_timestamps)
+                    max_time = max(w.get('end', w.get('start', 0)) for w in chunk_word_timestamps)
+                    logger.info(f"📊 Time range: {min_time:.2f}s - {max_time:.2f}s")
+                logger.info("=" * 80)
+                
                 # STEP 1: Trim overlapping portions from this chunk (keep only data AFTER overlap_duration)
                 # This prevents duplicates at the source rather than trying to clean them up later
+                original_diarized_count = len(chunk_diarized)
+                original_word_count = len(chunk_word_timestamps)
+                original_segment_count = len(chunk_segment_timestamps)
+                
                 chunk_diarized = [
                     seg for seg in chunk_diarized
                     if seg.get("start_time", seg.get("start", 0)) >= overlap_duration
@@ -3340,8 +3445,24 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     if char.get("start", 0) >= overlap_duration
                 ]
                 
-                logger.info(f"✂️ Trimmed chunk {i+1}: kept {len(chunk_word_timestamps)} words, "
-                           f"{len(chunk_diarized)} diarized segments (after {overlap_duration}s)")
+                # 🔍 DEBUG: Log AFTER trimming
+                logger.info("=" * 80)
+                logger.info(f"🔍 CHUNK {i+1} AFTER TRIMMING (overlap_duration={overlap_duration}s)")
+                logger.info("=" * 80)
+                logger.info(f"✂️ Words: {original_word_count} → {len(chunk_word_timestamps)} (removed {original_word_count - len(chunk_word_timestamps)})")
+                logger.info(f"✂️ Diarized segments: {original_diarized_count} → {len(chunk_diarized)} (removed {original_diarized_count - len(chunk_diarized)})")
+                logger.info(f"✂️ Segment timestamps: {original_segment_count} → {len(chunk_segment_timestamps)} (removed {original_segment_count - len(chunk_segment_timestamps)})")
+                
+                # Show first few words after trim
+                for idx, word in enumerate(chunk_word_timestamps[:10]):
+                    logger.info(f"  Word {idx} (after trim): start={word.get('start', 0):.2f}s, word='{word.get('word', '')}'")
+                
+                # Show new timestamp range
+                if chunk_word_timestamps:
+                    min_time = min(w.get('start', 0) for w in chunk_word_timestamps)
+                    max_time = max(w.get('end', w.get('start', 0)) for w in chunk_word_timestamps)
+                    logger.info(f"📊 New time range: {min_time:.2f}s - {max_time:.2f}s")
+                logger.info("=" * 80)
                 
                 # STEP 2: Find speakers in trimmed chunk
                 chunk_speakers = set(seg.get("speaker", "") for seg in chunk_diarized if seg.get("speaker"))
