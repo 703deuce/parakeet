@@ -1071,6 +1071,133 @@ def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
         logger.warning(f"Could not analyze audio quality: {e}")
         return {'duration': 0, 'likely_has_speech': True, 'is_too_quiet': False, 'is_too_short': False}
 
+# =============================================================================
+# VAD-BASED DYNAMIC TRIM POINT FINDER
+# =============================================================================
+
+# Global VAD model cache for trimming
+_vad_trim_model = None
+_vad_trim_utils = None
+
+def load_vad_model_for_trimming():
+    """
+    Load Silero VAD for finding sentence boundaries
+    Cached globally to avoid reloading
+    """
+    global _vad_trim_model, _vad_trim_utils
+    
+    if _vad_trim_model is None or _vad_trim_utils is None:
+        try:
+            logger.info("Loading Silero VAD for dynamic trim points...")
+            import torch
+            from torch.hub import load as torch_hub_load
+            
+            _vad_trim_model, _vad_trim_utils = torch_hub_load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False,
+                trust_repo=True
+            )
+            
+            if torch.cuda.is_available():
+                _vad_trim_model = _vad_trim_model.cuda()
+            
+            logger.info("✅ VAD loaded successfully for dynamic trimming")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load VAD for trimming: {e}")
+            return None, None
+    
+    return _vad_trim_model, _vad_trim_utils
+
+def find_dynamic_trim_point(chunk_path: str, target_time: float = 30.0, 
+                           search_window: float = 5.0, vad_threshold: float = 0.35) -> float:
+    """
+    Find sentence boundary near target_time using VAD
+    
+    Args:
+        chunk_path: Path to audio chunk file
+        target_time: Target trim time (default 30s)
+        search_window: Search range ±seconds (default ±5s, so 25-35s range)
+        vad_threshold: VAD sensitivity (0.35 is optimal)
+    
+    Returns:
+        Actual trim time at sentence boundary (e.g., 28.5s or 32.1s)
+        Falls back to target_time if no silence found
+    """
+    
+    try:
+        # Load VAD
+        vad_model, vad_utils = load_vad_model_for_trimming()
+        
+        if vad_model is None or vad_utils is None:
+            logger.warning("⚠️ VAD unavailable, using fixed trim point")
+            return target_time
+        
+        (get_speech_timestamps, _, read_audio, _, _) = vad_utils
+        
+        # Read audio
+        audio = read_audio(chunk_path, sampling_rate=16000)
+        
+        # Get speech segments
+        speech_timestamps = get_speech_timestamps(
+            audio,
+            vad_model,
+            threshold=vad_threshold,
+            sampling_rate=16000,
+            min_speech_duration_ms=150,      # Catch brief speech
+            min_silence_duration_ms=400,     # 0.4s silence = sentence boundary
+            speech_pad_ms=0                  # No padding for boundary detection
+        )
+        
+        if len(speech_timestamps) < 2:
+            logger.warning("⚠️ Not enough speech segments for trim point detection")
+            return target_time
+        
+        # Find silence regions (gaps between speech)
+        silence_candidates = []
+        
+        for i in range(len(speech_timestamps) - 1):
+            silence_start = speech_timestamps[i]['end'] / 16000  # Convert to seconds
+            silence_end = speech_timestamps[i + 1]['start'] / 16000
+            silence_duration = silence_end - silence_start
+            
+            # Only consider silences >= 0.4s (sentence boundaries)
+            if silence_duration >= 0.4:
+                silence_mid = (silence_start + silence_end) / 2
+                
+                # Check if within search window
+                if abs(silence_mid - target_time) <= search_window:
+                    silence_candidates.append({
+                        'time': silence_mid,
+                        'duration': silence_duration,
+                        'distance': abs(silence_mid - target_time)
+                    })
+        
+        # Find best candidate (closest to target)
+        if silence_candidates:
+            best = min(silence_candidates, key=lambda x: x['distance'])
+            actual_trim = best['time']
+            
+            logger.info(
+                f"✅ Dynamic trim: target={target_time:.1f}s, "
+                f"actual={actual_trim:.1f}s "
+                f"(silence={best['duration']:.2f}s, offset={best['distance']:.1f}s)"
+            )
+            
+            return actual_trim
+        else:
+            logger.warning(
+                f"⚠️ No silence found within {search_window}s of {target_time:.1f}s, "
+                f"using fixed trim"
+            )
+            return target_time
+            
+    except Exception as e:
+        logger.error(f"❌ Error finding dynamic trim point: {e}")
+        logger.warning("⚠️ Falling back to fixed trim point")
+        return target_time
+
 def deduplicate_overlapping_text(segments: List[Dict[str, Any]], overlap_duration: float = 30.0) -> List[Dict[str, Any]]:
     """
     Remove duplicate content introduced by overlapping chunk boundaries.
@@ -3678,7 +3805,28 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     
             else:
                 # Subsequent chunks - TRIM OVERLAP then map speakers and adjust timestamps
-                logger.info(f"🔗 Processing chunk {i+1} - trimming {overlap_duration}s overlap...")
+                logger.info(f"🔗 Processing chunk {i+1} - trimming overlap...")
+                
+                # =================================================================
+                # NEW: DYNAMIC TRIM POINT USING VAD (sentence-aware)
+                # =================================================================
+                
+                # Get chunk path if available
+                chunk_path = chunk_result.get("chunk_path") or chunk_result.get("audio_path")
+                
+                if chunk_path and os.path.exists(chunk_path):
+                    # Use VAD to find sentence boundary near target overlap
+                    actual_trim = find_dynamic_trim_point(
+                        chunk_path=chunk_path,
+                        target_time=float(overlap_duration),  # Target 30s
+                        search_window=5.0,                    # Search 25-35s range
+                        vad_threshold=0.35                    # Optimal threshold
+                    )
+                    logger.info(f"🎯 Using dynamic trim point: {actual_trim:.1f}s (sentence boundary)")
+                else:
+                    # Fallback to fixed trim if chunk path unavailable
+                    actual_trim = float(overlap_duration)
+                    logger.warning(f"⚠️ Chunk path unavailable, using fixed trim: {actual_trim:.1f}s")
                 
                 # 🔍 DEBUG: Log BEFORE trimming
                 logger.info("=" * 80)
@@ -3699,32 +3847,32 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     logger.info(f"📊 Time range: {min_time:.2f}s - {max_time:.2f}s")
                 logger.info("=" * 80)
                 
-                # STEP 1: Trim overlapping portions from this chunk (keep only data AFTER overlap_duration)
-                # This prevents duplicates at the source rather than trying to clean them up later
+                # STEP 1: Trim overlapping portions from this chunk using DYNAMIC trim point
+                # This prevents duplicates at the source AND splits at sentence boundaries
                 original_diarized_count = len(chunk_diarized)
                 original_word_count = len(chunk_word_timestamps)
                 original_segment_count = len(chunk_segment_timestamps)
                 
                 chunk_diarized = [
                     seg for seg in chunk_diarized
-                    if seg.get("start_time", seg.get("start", 0)) >= overlap_duration
+                    if seg.get("start_time", seg.get("start", 0)) >= actual_trim
                 ]
                 chunk_word_timestamps = [
                     word for word in chunk_word_timestamps
-                    if word.get("start", 0) >= overlap_duration
+                    if word.get("start", 0) >= actual_trim
                 ]
                 chunk_segment_timestamps = [
                     seg for seg in chunk_segment_timestamps
-                    if seg.get("start", seg.get("start_time", 0)) >= overlap_duration
+                    if seg.get("start", seg.get("start_time", 0)) >= actual_trim
                 ]
                 chunk_char_timestamps = [
                     char for char in chunk_char_timestamps
-                    if char.get("start", 0) >= overlap_duration
+                    if char.get("start", 0) >= actual_trim
                 ]
                 
                 # 🔍 DEBUG: Log AFTER trimming
                 logger.info("=" * 80)
-                logger.info(f"🔍 CHUNK {i+1} AFTER TRIMMING (overlap_duration={overlap_duration}s)")
+                logger.info(f"🔍 CHUNK {i+1} AFTER TRIMMING (actual_trim={actual_trim:.1f}s)")
                 logger.info("=" * 80)
                 logger.info(f"✂️ Words: {original_word_count} → {len(chunk_word_timestamps)} (removed {original_word_count - len(chunk_word_timestamps)})")
                 logger.info(f"✂️ Diarized segments: {original_diarized_count} → {len(chunk_diarized)} (removed {original_diarized_count - len(chunk_diarized)})")
@@ -3766,32 +3914,32 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                 # STEP 4: Calculate time offset (no need to subtract overlap since we already trimmed)
                 time_offset = current_time_offset
                 
-                # STEP 5: Adjust timestamps and merge trimmed data
+                # STEP 5: Adjust timestamps and merge trimmed data (using actual_trim)
                 merged_result["diarized_transcript"].extend([
                     {**seg, 
-                     "start_time": seg.get("start_time", 0) + time_offset - overlap_duration,
-                     "end_time": seg.get("end_time", 0) + time_offset - overlap_duration}
+                     "start_time": seg.get("start_time", 0) + time_offset - actual_trim,
+                     "end_time": seg.get("end_time", 0) + time_offset - actual_trim}
                     for seg in mapped_diarized
                 ])
                 
                 merged_result["word_timestamps"].extend([
                     {**word, 
-                     "start": word.get("start", 0) + time_offset - overlap_duration,
-                     "end": word.get("end", 0) + time_offset - overlap_duration}
+                     "start": word.get("start", 0) + time_offset - actual_trim,
+                     "end": word.get("end", 0) + time_offset - actual_trim}
                     for word in chunk_word_timestamps
                 ])
                 
                 merged_result["segment_timestamps"].extend([
                     {**seg, 
-                     "start": seg.get("start", 0) + time_offset - overlap_duration,
-                     "end": seg.get("end", 0) + time_offset - overlap_duration}
+                     "start": seg.get("start", 0) + time_offset - actual_trim,
+                     "end": seg.get("end", 0) + time_offset - actual_trim}
                     for seg in chunk_segment_timestamps
                 ])
                 
                 merged_result["char_timestamps"].extend([
                     {**char, 
-                     "start": char.get("start", 0) + time_offset - overlap_duration,
-                     "end": char.get("end", 0) + time_offset - overlap_duration}
+                     "start": char.get("start", 0) + time_offset - actual_trim,
+                     "end": char.get("end", 0) + time_offset - actual_trim}
                     for char in chunk_char_timestamps
                 ])
                 
