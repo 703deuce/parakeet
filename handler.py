@@ -1018,6 +1018,60 @@ def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
         logger.warning(f"Could not analyze audio quality: {e}")
         return {'duration': 0, 'likely_has_speech': True, 'is_too_quiet': False, 'is_too_short': False}
 
+def deduplicate_overlapping_text(segments: List[Dict[str, Any]], overlap_duration: float = 30.0) -> List[Dict[str, Any]]:
+    """
+    Remove duplicate content introduced by overlapping chunk boundaries.
+
+    Args:
+        segments: List of segment dictionaries containing 'start'/'start_time' and 'text'
+        overlap_duration: Duration window (seconds) to consider for potential duplicates
+
+    Returns:
+        Deduplicated list of segments sorted by start time
+    """
+    if not segments or len(segments) <= 1:
+        return segments
+
+    # Normalize ordering by start timestamp
+    sorted_segments = sorted(
+        segments,
+        key=lambda s: s.get("start", s.get("start_time", 0.0))
+    )
+
+    deduplicated: List[Dict[str, Any]] = []
+    seen_text_windows: Dict[float, str] = {}
+
+    for seg in sorted_segments:
+        seg_start = seg.get("start", seg.get("start_time", 0.0))
+        seg_text = seg.get("text", "").strip()
+
+        if not seg_text:
+            continue
+
+        text_sig = seg_text[:50].lower()
+        is_duplicate = False
+
+        # Copy keys to avoid runtime modification while iterating
+        for prev_time in list(seen_text_windows.keys()):
+            prev_sig = seen_text_windows[prev_time]
+
+            if abs(seg_start - prev_time) < overlap_duration and prev_sig == text_sig:
+                is_duplicate = True
+                break
+
+            if seg_start - prev_time > overlap_duration * 2:
+                del seen_text_windows[prev_time]
+
+        if not is_duplicate:
+            deduplicated.append(seg)
+            seen_text_windows[seg_start] = text_sig
+
+    logger.info(
+        f"🧹 Deduplication: {len(sorted_segments)} → {len(deduplicated)} segments "
+        f"(removed {len(sorted_segments) - len(deduplicated)} duplicates)"
+    )
+    return deduplicated
+
 def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                                 min_speakers: int = None, max_speakers: int = None,
                                 segmentation_params: Dict[str, Any] = None,
@@ -1819,19 +1873,17 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # CRITICAL: Use aggressive VAD to prevent Parakeet from skipping sections
-            # By default, NeMo models have VAD (threshold ~0.5) that skips music/unclear audio
-            # This causes 10-second gaps in word timestamps
-            # Lower threshold (0.3) catches speech over music while still filtering pure silence
-            transcribe_params['vad_stream_config'] = {
-                'threshold': 0.3,              # Much lower than default (0.5) - catches speech over music
-                'min_speech_duration_ms': 100, # Catch short utterances
-                'min_silence_duration_ms': 100, # Small gaps treated as continuous
-                'pad_onset_ms': 300,           # Extra padding before speech starts
-                'pad_offset_ms': 300,          # Extra padding after speech ends
-                'window_size_samples': 512
-            }
-            logger.info(f"🎤 Aggressive VAD (threshold=0.3) - catches speech over music while filtering silence")
+            # DISABLED: VAD was causing missing segments (e.g., narrator over background audio)
+            # Leaving configuration commented for future reference if re-enabled with safer defaults.
+            # transcribe_params['vad_stream_config'] = {
+            #     'threshold': 0.3,
+            #     'min_speech_duration_ms': 100,
+            #     'min_silence_duration_ms': 100,
+            #     'pad_onset_ms': 300,
+            #     'pad_offset_ms': 300,
+            #     'window_size_samples': 512
+            # }
+            logger.info("🎤 VAD disabled - processing full audio to avoid missing segments")
             
             # Transcribe with parameters
             if transcribe_params:
@@ -3335,6 +3387,19 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
         
         # Clean up merged result
         merged_result["transcript"] = merged_result["transcript"].strip()
+
+        if merged_result["diarized_transcript"]:
+            merged_result["diarized_transcript"] = deduplicate_overlapping_text(
+                merged_result["diarized_transcript"],
+                overlap_duration=float(overlap_duration)
+            )
+
+            # Rebuild transcript from deduplicated segments to keep text aligned
+            merged_result["transcript"] = " ".join(
+                seg.get("text", "").strip()
+                for seg in merged_result["diarized_transcript"]
+                if seg.get("text")
+            ).strip() or merged_result["transcript"]
         
         # Calculate final statistics
         total_duration = current_time_offset
