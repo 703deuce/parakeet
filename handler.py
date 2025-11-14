@@ -2372,7 +2372,7 @@ def fill_transcript_gaps_with_parakeet(
     gap_padding_seconds: float = 0.5
 ) -> dict:
     """
-    Detect gaps in transcription timestamps and re-transcribe using Parakeet with VAD
+    Detect gaps in transcription timestamps and re-transcribe using Parakeet (no VAD filtering)
     
     Args:
         transcription_result: Original Parakeet output with timestamps
@@ -2448,11 +2448,17 @@ def fill_transcript_gaps_with_parakeet(
                 logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
                            f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
-                # Re-transcribe with Parakeet
+                # Check audio energy to confirm there's content
+                import numpy as np
+                rms_energy = np.sqrt(np.mean(gap_audio**2))
+                logger.info(f"⚡ Gap audio: {len(gap_audio)} samples, RMS energy: {rms_energy:.4f}")
+                
+                # Re-transcribe with Parakeet - force transcription without VAD filtering
+                # Use return_hypotheses=True to get more aggressive transcription
                 gap_result = model.transcribe(
                     [tmp_path],              # List format (Parakeet requirement)
                     batch_size=1,            # Maximum quality for gap filling
-                    return_hypotheses=False  # Get final text only
+                    return_hypotheses=True   # Get full hypothesis data (bypasses VAD filtering)
                 )
                 
                 # Process result
