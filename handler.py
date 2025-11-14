@@ -1071,133 +1071,6 @@ def analyze_audio_quality(audio_path: str) -> Dict[str, Any]:
         logger.warning(f"Could not analyze audio quality: {e}")
         return {'duration': 0, 'likely_has_speech': True, 'is_too_quiet': False, 'is_too_short': False}
 
-# =============================================================================
-# VAD-BASED DYNAMIC TRIM POINT FINDER
-# =============================================================================
-
-# Global VAD model cache for trimming
-_vad_trim_model = None
-_vad_trim_utils = None
-
-def load_vad_model_for_trimming():
-    """
-    Load Silero VAD for finding sentence boundaries
-    Cached globally to avoid reloading
-    """
-    global _vad_trim_model, _vad_trim_utils
-    
-    if _vad_trim_model is None or _vad_trim_utils is None:
-        try:
-            logger.info("Loading Silero VAD for dynamic trim points...")
-            import torch
-            from torch.hub import load as torch_hub_load
-            
-            _vad_trim_model, _vad_trim_utils = torch_hub_load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                trust_repo=True
-            )
-            
-            if torch.cuda.is_available():
-                _vad_trim_model = _vad_trim_model.cuda()
-            
-            logger.info("✅ VAD loaded successfully for dynamic trimming")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to load VAD for trimming: {e}")
-            return None, None
-    
-    return _vad_trim_model, _vad_trim_utils
-
-def find_dynamic_trim_point(chunk_path: str, target_time: float = 30.0, 
-                           search_window: float = 5.0, vad_threshold: float = 0.35) -> float:
-    """
-    Find sentence boundary near target_time using VAD
-    
-    Args:
-        chunk_path: Path to audio chunk file
-        target_time: Target trim time (default 30s)
-        search_window: Search range ±seconds (default ±5s, so 25-35s range)
-        vad_threshold: VAD sensitivity (0.35 is optimal)
-    
-    Returns:
-        Actual trim time at sentence boundary (e.g., 28.5s or 32.1s)
-        Falls back to target_time if no silence found
-    """
-    
-    try:
-        # Load VAD
-        vad_model, vad_utils = load_vad_model_for_trimming()
-        
-        if vad_model is None or vad_utils is None:
-            logger.warning("⚠️ VAD unavailable, using fixed trim point")
-            return target_time
-        
-        (get_speech_timestamps, _, read_audio, _, _) = vad_utils
-        
-        # Read audio
-        audio = read_audio(chunk_path, sampling_rate=16000)
-        
-        # Get speech segments
-        speech_timestamps = get_speech_timestamps(
-            audio,
-            vad_model,
-            threshold=vad_threshold,
-            sampling_rate=16000,
-            min_speech_duration_ms=150,      # Catch brief speech
-            min_silence_duration_ms=400,     # 0.4s silence = sentence boundary
-            speech_pad_ms=0                  # No padding for boundary detection
-        )
-        
-        if len(speech_timestamps) < 2:
-            logger.warning("⚠️ Not enough speech segments for trim point detection")
-            return target_time
-        
-        # Find silence regions (gaps between speech)
-        silence_candidates = []
-        
-        for i in range(len(speech_timestamps) - 1):
-            silence_start = speech_timestamps[i]['end'] / 16000  # Convert to seconds
-            silence_end = speech_timestamps[i + 1]['start'] / 16000
-            silence_duration = silence_end - silence_start
-            
-            # Only consider silences >= 0.4s (sentence boundaries)
-            if silence_duration >= 0.4:
-                silence_mid = (silence_start + silence_end) / 2
-                
-                # Check if within search window
-                if abs(silence_mid - target_time) <= search_window:
-                    silence_candidates.append({
-                        'time': silence_mid,
-                        'duration': silence_duration,
-                        'distance': abs(silence_mid - target_time)
-                    })
-        
-        # Find best candidate (closest to target)
-        if silence_candidates:
-            best = min(silence_candidates, key=lambda x: x['distance'])
-            actual_trim = best['time']
-            
-            logger.info(
-                f"✅ Dynamic trim: target={target_time:.1f}s, "
-                f"actual={actual_trim:.1f}s "
-                f"(silence={best['duration']:.2f}s, offset={best['distance']:.1f}s)"
-            )
-            
-            return actual_trim
-        else:
-            logger.warning(
-                f"⚠️ No silence found within {search_window}s of {target_time:.1f}s, "
-                f"using fixed trim"
-            )
-            return target_time
-            
-    except Exception as e:
-        logger.error(f"❌ Error finding dynamic trim point: {e}")
-        logger.warning("⚠️ Falling back to fixed trim point")
-        return target_time
-
 def deduplicate_overlapping_text(segments: List[Dict[str, Any]], overlap_duration: float = 30.0) -> List[Dict[str, Any]]:
     """
     Remove duplicate content introduced by overlapping chunk boundaries.
@@ -2111,8 +1984,17 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # No VAD configuration needed - Parakeet handles audio processing internally
-            logger.info("🎤 Using Parakeet's default audio processing")
+            # DISABLED: VAD was causing missing segments (e.g., narrator over background audio)
+            # Leaving configuration commented for future reference if re-enabled with safer defaults.
+            # transcribe_params['vad_stream_config'] = {
+            #     'threshold': 0.3,
+            #     'min_speech_duration_ms': 100,
+            #     'min_silence_duration_ms': 100,
+            #     'pad_onset_ms': 300,
+            #     'pad_offset_ms': 300,
+            #     'window_size_samples': 512
+            # }
+            logger.info("🎤 VAD disabled - processing full audio to avoid missing segments")
             
             # Transcribe with parameters
             if transcribe_params:
@@ -2372,7 +2254,7 @@ def fill_transcript_gaps_with_parakeet(
     gap_padding_seconds: float = 0.5
 ) -> dict:
     """
-    Detect gaps in transcription timestamps and re-transcribe using Parakeet (no VAD filtering)
+    Detect gaps in transcription timestamps and re-transcribe using Parakeet
     
     Args:
         transcription_result: Original Parakeet output with timestamps
@@ -2426,7 +2308,7 @@ def fill_transcript_gaps_with_parakeet(
             logger.error(f"❌ Could not load audio for gap filling: {e}")
             return transcription_result
         
-        # Step 4: Re-transcribe each gap
+        # Step 3: Re-transcribe each gap
         filled_segments = []
         for gap_idx, gap in enumerate(gaps):
             # Add padding for context
@@ -2448,38 +2330,14 @@ def fill_transcript_gaps_with_parakeet(
                 logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
                            f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
-                # Check audio energy to confirm there's content
-                import numpy as np
-                rms_energy = np.sqrt(np.mean(gap_audio**2))
-                logger.info(f"⚡ Gap audio: {len(gap_audio)} samples, RMS energy: {rms_energy:.4f}")
+                # Re-transcribe with Parakeet using the loaded model (batch_size=1 for max quality)
+                gap_result = model.transcribe(
+                    [tmp_path],
+                    batch_size=1,  # Maximum quality for gap filling
+                    timestamps=True
+                )
                 
-                # AGGRESSIVE TRANSCRIPTION: Temporarily disable confidence threshold
-                # This forces Parakeet to transcribe ALL audio, even low-confidence speech
-                original_confidence = None
-                try:
-                    # Try to lower the confidence threshold to accept everything
-                    if hasattr(model, 'cfg'):
-                        if hasattr(model.cfg, 'decoding'):
-                            if hasattr(model.cfg.decoding, 'confidence_threshold'):
-                                original_confidence = model.cfg.decoding.confidence_threshold
-                                model.cfg.decoding.confidence_threshold = -100.0  # Accept everything
-                                logger.info(f"  💪 Lowered confidence threshold: {original_confidence} → -100.0")
-                    
-                    # Force aggressive transcription with hypotheses and logprobs
-                    gap_result = model.transcribe(
-                        [tmp_path],              # List format (Parakeet requirement)
-                        batch_size=1,            # Maximum quality for gap filling
-                        return_hypotheses=True,  # Get full hypothesis data
-                        logprobs=True            # Force decoding even for low confidence
-                    )
-                    
-                finally:
-                    # Always restore the original threshold
-                    if original_confidence is not None:
-                        model.cfg.decoding.confidence_threshold = original_confidence
-                        logger.info(f"  ↩️  Restored confidence threshold to {original_confidence}")
-                
-                # Process result - extract word timestamps from hypothesis
+                # Process result
                 if gap_result and len(gap_result) > 0:
                     first_result = gap_result[0]
                     gap_word_timestamps = []
@@ -2519,7 +2377,7 @@ def fill_transcript_gaps_with_parakeet(
                             'words': gap_words
                         })
                     else:
-                        logger.info(f"⚪ Gap {gap_idx+1}: No speech detected (likely silence/noise only)")
+                        logger.warning(f"⚠️ Gap re-transcription returned no words in range")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to fill gap: {e}")
@@ -3553,216 +3411,10 @@ def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: in
         logger.warning(f"⚠️ Silence detection failed: {e}, using time-based splitting")
         return [0, len(audio_data)]
 
-def split_into_sentences(text: str) -> List[str]:
-    """
-    Split text into sentences using punctuation markers.
-    Handles common abbreviations and edge cases.
-    
-    Args:
-        text: Input text to split
-        
-    Returns:
-        List of sentences
-    """
-    import re
-    
-    if not text:
-        return []
-    
-    # Simple sentence splitter - splits on . ! ? followed by space and capital letter
-    # This handles most cases without needing heavy NLP libraries
-    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
-    
-    # Clean up and filter empty sentences
-    return [s.strip() for s in sentences if s.strip()]
-
-def format_transcript_with_paragraphs(
-    diarized_segments: List[Dict],
-    max_words_per_paragraph: int = 75,
-    max_duration_seconds: float = 30.0,
-    max_silence_gap: float = 3.0,
-    sentence_aware: bool = True
-) -> List[Dict]:
-    """
-    Convert diarized segments into readable paragraphs (TurboScribe-style).
-    
-    Features:
-    - Sentence-aware segmentation (never breaks mid-sentence)
-    - Speaker-based paragraphing (new paragraph on speaker change)
-    - Configurable length limits (words, duration)
-    - Silence gap detection (paragraph breaks on long pauses)
-    
-    Args:
-        diarized_segments: List of diarized segments with speaker, text, timestamps
-        max_words_per_paragraph: Maximum words before starting new paragraph (default: 75)
-        max_duration_seconds: Maximum duration before starting new paragraph (default: 30s)
-        max_silence_gap: Silence duration that triggers new paragraph (default: 3s)
-        sentence_aware: Ensure paragraphs start at sentence boundaries (default: True)
-        
-    Returns:
-        List of paragraph dictionaries with speaker, text, timestamps, word_count
-    """
-    if not diarized_segments:
-        return []
-    
-    paragraphs = []
-    current_paragraph = {
-        'speaker': None,
-        'sentences': [],
-        'start': None,
-        'end': None,
-        'word_count': 0
-    }
-    
-    for segment in diarized_segments:
-        speaker = segment.get('speaker', 'SPEAKER_00')
-        text = segment.get('text', '').strip()
-        start = segment.get('start', segment.get('start_time', 0))
-        end = segment.get('end', segment.get('end_time', 0))
-        
-        if not text:
-            continue
-        
-        # Split into sentences if sentence-aware mode is enabled
-        if sentence_aware:
-            sentences = split_into_sentences(text)
-        else:
-            sentences = [text]
-        
-        for sentence in sentences:
-            sentence_words = len(sentence.split())
-            
-            # Calculate duration of current paragraph
-            paragraph_duration = 0
-            if current_paragraph['start'] is not None and current_paragraph['end'] is not None:
-                paragraph_duration = current_paragraph['end'] - current_paragraph['start']
-            
-            # Calculate silence gap
-            silence_gap = 0
-            if current_paragraph['end'] is not None:
-                silence_gap = start - current_paragraph['end']
-            
-            # Conditions to start a new paragraph:
-            # 1. Speaker changed
-            # 2. Exceeded max words
-            # 3. Exceeded max duration
-            # 4. Long silence gap (3+ seconds)
-            should_break = (
-                current_paragraph['speaker'] and (
-                    speaker != current_paragraph['speaker'] or  # Speaker change
-                    current_paragraph['word_count'] + sentence_words > max_words_per_paragraph or  # Word limit
-                    paragraph_duration > max_duration_seconds or  # Duration limit
-                    silence_gap > max_silence_gap  # Long pause
-                )
-            )
-            
-            if should_break:
-                # Finalize current paragraph
-                if current_paragraph['sentences']:
-                    paragraphs.append({
-                        'speaker': current_paragraph['speaker'],
-                        'text': ' '.join(current_paragraph['sentences']),
-                        'start': current_paragraph['start'],
-                        'end': current_paragraph['end'],
-                        'word_count': current_paragraph['word_count'],
-                        'duration': current_paragraph['end'] - current_paragraph['start']
-                    })
-                
-                # Start new paragraph
-                current_paragraph = {
-                    'speaker': speaker,
-                    'sentences': [sentence],
-                    'start': start,
-                    'end': end,
-                    'word_count': sentence_words
-                }
-            else:
-                # Add to current paragraph
-                if not current_paragraph['speaker']:
-                    current_paragraph['speaker'] = speaker
-                    current_paragraph['start'] = start
-                
-                current_paragraph['sentences'].append(sentence)
-                current_paragraph['end'] = end
-                current_paragraph['word_count'] += sentence_words
-    
-    # Add final paragraph
-    if current_paragraph['sentences']:
-        paragraphs.append({
-            'speaker': current_paragraph['speaker'],
-            'text': ' '.join(current_paragraph['sentences']),
-            'start': current_paragraph['start'],
-            'end': current_paragraph['end'],
-            'word_count': current_paragraph['word_count'],
-            'duration': current_paragraph['end'] - current_paragraph['start']
-        })
-    
-    logger.info(f"📝 Formatted {len(diarized_segments)} segments into {len(paragraphs)} readable paragraphs")
-    return paragraphs
-
-def format_paragraphs_as_text(paragraphs: List[Dict], include_timestamps: bool = True) -> str:
-    """
-    Convert paragraph dictionaries into human-readable formatted text.
-    
-    Args:
-        paragraphs: List of paragraph dictionaries from format_transcript_with_paragraphs()
-        include_timestamps: Whether to include timestamp headers (default: True)
-        
-    Returns:
-        Formatted transcript string
-    """
-    if not paragraphs:
-        return ""
-    
-    formatted_lines = []
-    
-    for para in paragraphs:
-        speaker = para.get('speaker', 'UNKNOWN').replace('_', ' ').title()
-        text = para.get('text', '').strip()
-        start = para.get('start', 0)
-        end = para.get('end', 0)
-        
-        if not text:
-            continue
-        
-        if include_timestamps:
-            # Format: SPEAKER_00 [00:01:30 - 00:01:56]
-            start_time = format_timestamp(start)
-            end_time = format_timestamp(end)
-            header = f"{speaker} [{start_time} - {end_time}]"
-            formatted_lines.append(f"{header}\n{text}")
-        else:
-            # Simple format: SPEAKER_00: text
-            formatted_lines.append(f"{speaker}: {text}")
-    
-    return '\n\n'.join(formatted_lines)
-
-def format_timestamp(seconds: float) -> str:
-    """
-    Convert seconds to HH:MM:SS or MM:SS format.
-    
-    Args:
-        seconds: Time in seconds
-        
-    Returns:
-        Formatted timestamp string
-    """
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    else:
-        return f"{minutes:02d}:{secs:02d}"
-
 def create_formatted_transcript(diarized_results: List[Dict]) -> str:
     """
-    Create a human-readable formatted transcript from diarized results.
-    Groups consecutive segments by speaker and formats them nicely.
-    
-    NOTE: This is the legacy simple formatter. For TurboScribe-style paragraphs,
-    use format_transcript_with_paragraphs() instead.
+    Create a human-readable formatted transcript from diarized results
+    Groups consecutive segments by speaker and formats them nicely
     """
     if not diarized_results:
         return ""
@@ -4006,28 +3658,7 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     
             else:
                 # Subsequent chunks - TRIM OVERLAP then map speakers and adjust timestamps
-                logger.info(f"🔗 Processing chunk {i+1} - trimming overlap...")
-                
-                # =================================================================
-                # NEW: DYNAMIC TRIM POINT USING VAD (sentence-aware)
-                # =================================================================
-                
-                # Get chunk path if available
-                chunk_path = chunk_result.get("chunk_path") or chunk_result.get("audio_path")
-                
-                if chunk_path and os.path.exists(chunk_path):
-                    # Use VAD to find sentence boundary near target overlap
-                    actual_trim = find_dynamic_trim_point(
-                        chunk_path=chunk_path,
-                        target_time=float(overlap_duration),  # Target 30s
-                        search_window=5.0,                    # Search 25-35s range
-                        vad_threshold=0.35                    # Optimal threshold
-                    )
-                    logger.info(f"🎯 Using dynamic trim point: {actual_trim:.1f}s (sentence boundary)")
-                else:
-                    # Fallback to fixed trim if chunk path unavailable
-                    actual_trim = float(overlap_duration)
-                    logger.warning(f"⚠️ Chunk path unavailable, using fixed trim: {actual_trim:.1f}s")
+                logger.info(f"🔗 Processing chunk {i+1} - trimming {overlap_duration}s overlap...")
                 
                 # 🔍 DEBUG: Log BEFORE trimming
                 logger.info("=" * 80)
@@ -4048,32 +3679,32 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                     logger.info(f"📊 Time range: {min_time:.2f}s - {max_time:.2f}s")
                 logger.info("=" * 80)
                 
-                # STEP 1: Trim overlapping portions from this chunk using DYNAMIC trim point
-                # This prevents duplicates at the source AND splits at sentence boundaries
+                # STEP 1: Trim overlapping portions from this chunk (keep only data AFTER overlap_duration)
+                # This prevents duplicates at the source rather than trying to clean them up later
                 original_diarized_count = len(chunk_diarized)
                 original_word_count = len(chunk_word_timestamps)
                 original_segment_count = len(chunk_segment_timestamps)
                 
                 chunk_diarized = [
                     seg for seg in chunk_diarized
-                    if seg.get("start_time", seg.get("start", 0)) >= actual_trim
+                    if seg.get("start_time", seg.get("start", 0)) >= overlap_duration
                 ]
                 chunk_word_timestamps = [
                     word for word in chunk_word_timestamps
-                    if word.get("start", 0) >= actual_trim
+                    if word.get("start", 0) >= overlap_duration
                 ]
                 chunk_segment_timestamps = [
                     seg for seg in chunk_segment_timestamps
-                    if seg.get("start", seg.get("start_time", 0)) >= actual_trim
+                    if seg.get("start", seg.get("start_time", 0)) >= overlap_duration
                 ]
                 chunk_char_timestamps = [
                     char for char in chunk_char_timestamps
-                    if char.get("start", 0) >= actual_trim
+                    if char.get("start", 0) >= overlap_duration
                 ]
                 
                 # 🔍 DEBUG: Log AFTER trimming
                 logger.info("=" * 80)
-                logger.info(f"🔍 CHUNK {i+1} AFTER TRIMMING (actual_trim={actual_trim:.1f}s)")
+                logger.info(f"🔍 CHUNK {i+1} AFTER TRIMMING (overlap_duration={overlap_duration}s)")
                 logger.info("=" * 80)
                 logger.info(f"✂️ Words: {original_word_count} → {len(chunk_word_timestamps)} (removed {original_word_count - len(chunk_word_timestamps)})")
                 logger.info(f"✂️ Diarized segments: {original_diarized_count} → {len(chunk_diarized)} (removed {original_diarized_count - len(chunk_diarized)})")
@@ -4115,32 +3746,32 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
                 # STEP 4: Calculate time offset (no need to subtract overlap since we already trimmed)
                 time_offset = current_time_offset
                 
-                # STEP 5: Adjust timestamps and merge trimmed data (using actual_trim)
+                # STEP 5: Adjust timestamps and merge trimmed data
                 merged_result["diarized_transcript"].extend([
                     {**seg, 
-                     "start_time": seg.get("start_time", 0) + time_offset - actual_trim,
-                     "end_time": seg.get("end_time", 0) + time_offset - actual_trim}
+                     "start_time": seg.get("start_time", 0) + time_offset - overlap_duration,
+                     "end_time": seg.get("end_time", 0) + time_offset - overlap_duration}
                     for seg in mapped_diarized
                 ])
                 
                 merged_result["word_timestamps"].extend([
                     {**word, 
-                     "start": word.get("start", 0) + time_offset - actual_trim,
-                     "end": word.get("end", 0) + time_offset - actual_trim}
+                     "start": word.get("start", 0) + time_offset - overlap_duration,
+                     "end": word.get("end", 0) + time_offset - overlap_duration}
                     for word in chunk_word_timestamps
                 ])
                 
                 merged_result["segment_timestamps"].extend([
                     {**seg, 
-                     "start": seg.get("start", 0) + time_offset - actual_trim,
-                     "end": seg.get("end", 0) + time_offset - actual_trim}
+                     "start": seg.get("start", 0) + time_offset - overlap_duration,
+                     "end": seg.get("end", 0) + time_offset - overlap_duration}
                     for seg in chunk_segment_timestamps
                 ])
                 
                 merged_result["char_timestamps"].extend([
                     {**char, 
-                     "start": char.get("start", 0) + time_offset - actual_trim,
-                     "end": char.get("end", 0) + time_offset - actual_trim}
+                     "start": char.get("start", 0) + time_offset - overlap_duration,
+                     "end": char.get("end", 0) + time_offset - overlap_duration}
                     for char in chunk_char_timestamps
                 ])
                 
@@ -4192,34 +3823,6 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             f"{len(merged_result['transcript'].split()) if merged_result['transcript'] else 0} words"
         )
         
-        # Generate TurboScribe-style paragraph formatting
-        if merged_result["diarized_transcript"]:
-            try:
-                logger.info("📝 Generating TurboScribe-style paragraph formatting...")
-                paragraphs = format_transcript_with_paragraphs(
-                    merged_result["diarized_transcript"],
-                    max_words_per_paragraph=75,      # TurboScribe default
-                    max_duration_seconds=30.0,       # 30 second max per paragraph
-                    max_silence_gap=3.0,             # 3+ second pause = new paragraph
-                    sentence_aware=True              # Never break mid-sentence
-                )
-                
-                # Generate formatted text with timestamps
-                formatted_text = format_paragraphs_as_text(paragraphs, include_timestamps=True)
-                
-                # Add to result
-                merged_result["paragraphs"] = paragraphs
-                merged_result["formatted_transcript"] = formatted_text
-                
-                logger.info(f"✅ Created {len(paragraphs)} readable paragraphs from {len(merged_result['diarized_transcript'])} segments")
-            except Exception as para_error:
-                logger.warning(f"⚠️ Paragraph formatting failed: {para_error}, using simple format")
-                merged_result["paragraphs"] = []
-                merged_result["formatted_transcript"] = create_formatted_transcript(merged_result["diarized_transcript"])
-        else:
-            merged_result["paragraphs"] = []
-            merged_result["formatted_transcript"] = ""
-        
         # Calculate final statistics
         total_duration = current_time_offset
         word_count = len(merged_result["transcript"].split())
@@ -4229,7 +3832,6 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             "total_duration": total_duration,
             "word_count": word_count,
             "speaker_count": len(unique_speakers),
-            "paragraph_count": len(merged_result.get("paragraphs", [])),
             "total_segments": len(merged_result["diarized_transcript"]),
             "total_words": len(merged_result["word_timestamps"]),
             "total_characters": len(merged_result["transcript"]),
