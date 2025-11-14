@@ -2250,17 +2250,20 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
 def fill_transcript_gaps_with_parakeet(
     transcription_result: dict,
     audio_path: str,
-    min_gap_seconds: float = 2.0,
-    gap_padding_seconds: float = 0.5
+    min_gap_seconds: float = 0.5,
+    gap_padding_seconds: float = 0.75
 ) -> dict:
     """
-    Detect gaps in transcription timestamps and re-transcribe using Parakeet
+    Detect gaps in transcription timestamps and re-transcribe using Parakeet.
+    Enhanced with RMS energy check to skip true silence.
+    
+    ULTRA-AGGRESSIVE MODE: 0.5 second minimum gap detection for maximum coverage
     
     Args:
         transcription_result: Original Parakeet output with timestamps
         audio_path: Path to original audio file
-        min_gap_seconds: Minimum gap size to attempt filling (default 2s)
-        gap_padding_seconds: Extra audio to include before/after gap (default 0.5s)
+        min_gap_seconds: Minimum gap size to attempt filling (default 0.5s - ULTRA AGGRESSIVE)
+        gap_padding_seconds: Extra audio to include before/after gap (default 0.75s)
     
     Returns:
         Updated transcription result with filled gaps
