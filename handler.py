@@ -2111,28 +2111,11 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # VAD Configuration: Use Parakeet's native VAD (PostProcessorConfig)
-            # NOTE: Parakeet uses vad_config (PostProcessorConfig), NOT vad_stream_config (Whisper)
-            use_vad = True  # Enable VAD to filter breaths/silence that cause hallucinations
-            
-            if use_vad:
-                try:
-                    from nemo.collections.asr.parts.utils.vad_utils import PostProcessorConfig
-                    
-                    vad_config = PostProcessorConfig(
-                        onset=0.35,              # Detection threshold (optimal for interviews)
-                        offset=0.35,             # End threshold
-                        min_duration_on=0.15,    # Min speech duration (150ms)
-                        min_duration_off=0.4,    # Min silence duration (400ms)
-                        pad_onset=0.2,           # Padding before speech (200ms)
-                        pad_offset=0.2           # Padding after speech (200ms)
-                    )
-                    transcribe_params['vad_config'] = vad_config
-                    logger.info("🎤 VAD enabled with Parakeet's PostProcessorConfig (onset=0.35)")
-                except Exception as vad_error:
-                    logger.warning(f"⚠️ Could not create VAD config: {vad_error}, proceeding without VAD")
-            else:
-                logger.info("🎤 VAD disabled - processing full audio")
+            # VAD Configuration: Parakeet has built-in VAD (no config needed)
+            # NOTE: Parakeet automatically applies internal VAD during transcription
+            # No external configuration required - it just works!
+            # The built-in VAD filters silence/breaths while preserving all speech
+            logger.info("🎤 Using Parakeet's built-in VAD (automatic, no config needed)")
             
             # Transcribe with parameters
             if transcribe_params:
@@ -2407,7 +2390,6 @@ def fill_transcript_gaps_with_parakeet(
         import librosa
         import soundfile as sf
         import tempfile
-        from nemo.collections.asr.parts.utils.vad_utils import PostProcessorConfig
         
         timestamps = transcription_result.get('word_timestamps', [])
         if not timestamps or len(timestamps) < 2:
@@ -2439,23 +2421,8 @@ def fill_transcript_gaps_with_parakeet(
         gap_durations = [f"{g['duration']:.1f}s" for g in gaps]
         logger.info(f"🔍 Found {len(gaps)} gaps to fill: {gap_durations}")
         
-        # Step 2: Create Parakeet VAD config (correct NeMo format)
-        vad_config = None
-        try:
-            vad_config = PostProcessorConfig(
-                onset=0.35,              # Detection threshold (optimal for interviews)
-                offset=0.35,             # End threshold
-                min_duration_on=0.15,    # Min speech duration (150ms)
-                min_duration_off=0.4,    # Min silence duration (400ms)
-                pad_onset=0.2,           # Padding before speech (200ms)
-                pad_offset=0.2           # Padding after speech (200ms)
-            )
-            logger.info("✅ Parakeet VAD config created (onset=0.35, filters breaths while keeping speech)")
-        except Exception as vad_error:
-            logger.warning(f"⚠️ Could not create VAD config: {vad_error}, proceeding without VAD")
-            vad_config = None
-        
-        # Step 3: Load full audio once
+        # Step 2: Load full audio once
+        # NOTE: Parakeet has built-in VAD that works automatically - no config needed!
         try:
             audio, sr = librosa.load(audio_path, sr=16000, mono=True)
             total_duration = len(audio) / sr
@@ -2485,23 +2452,14 @@ def fill_transcript_gaps_with_parakeet(
                 logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
                            f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
-                # Re-transcribe with Parakeet using correct NeMo VAD parameters
-                # NOTE: Use vad_config (PostProcessorConfig), NOT vad_stream_config (Whisper-specific)
-                if vad_config is not None:
-                    # With VAD filtering (prevents breath hallucinations)
-                    gap_result = model.transcribe(
-                        [tmp_path],              # List format (Parakeet requirement)
-                        batch_size=1,            # Maximum quality for gap filling
-                        return_hypotheses=False, # Get final text only
-                        vad_config=vad_config    # Correct Parakeet VAD parameter
-                    )
-                else:
-                    # Without VAD (fallback if VAD config failed)
-                    gap_result = model.transcribe(
-                        [tmp_path],
-                        batch_size=1,
-                        return_hypotheses=False
-                    )
+                # Re-transcribe with Parakeet (built-in VAD works automatically)
+                # NOTE: Parakeet has internal VAD - no config needed, just call transcribe()
+                gap_result = model.transcribe(
+                    [tmp_path],              # List format (Parakeet requirement)
+                    batch_size=1,            # Maximum quality for gap filling
+                    return_hypotheses=False  # Get final text only
+                )
+                # Parakeet's built-in VAD automatically filters silence/breaths!
                 
                 # Process result
                 if gap_result and len(gap_result) > 0:
