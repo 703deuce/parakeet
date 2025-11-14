@@ -3529,10 +3529,216 @@ def find_silence_boundaries(audio_data: np.ndarray, sample_rate: int, top_db: in
         logger.warning(f"⚠️ Silence detection failed: {e}, using time-based splitting")
         return [0, len(audio_data)]
 
+def split_into_sentences(text: str) -> List[str]:
+    """
+    Split text into sentences using punctuation markers.
+    Handles common abbreviations and edge cases.
+    
+    Args:
+        text: Input text to split
+        
+    Returns:
+        List of sentences
+    """
+    import re
+    
+    if not text:
+        return []
+    
+    # Simple sentence splitter - splits on . ! ? followed by space and capital letter
+    # This handles most cases without needing heavy NLP libraries
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+    
+    # Clean up and filter empty sentences
+    return [s.strip() for s in sentences if s.strip()]
+
+def format_transcript_with_paragraphs(
+    diarized_segments: List[Dict],
+    max_words_per_paragraph: int = 75,
+    max_duration_seconds: float = 30.0,
+    max_silence_gap: float = 3.0,
+    sentence_aware: bool = True
+) -> List[Dict]:
+    """
+    Convert diarized segments into readable paragraphs (TurboScribe-style).
+    
+    Features:
+    - Sentence-aware segmentation (never breaks mid-sentence)
+    - Speaker-based paragraphing (new paragraph on speaker change)
+    - Configurable length limits (words, duration)
+    - Silence gap detection (paragraph breaks on long pauses)
+    
+    Args:
+        diarized_segments: List of diarized segments with speaker, text, timestamps
+        max_words_per_paragraph: Maximum words before starting new paragraph (default: 75)
+        max_duration_seconds: Maximum duration before starting new paragraph (default: 30s)
+        max_silence_gap: Silence duration that triggers new paragraph (default: 3s)
+        sentence_aware: Ensure paragraphs start at sentence boundaries (default: True)
+        
+    Returns:
+        List of paragraph dictionaries with speaker, text, timestamps, word_count
+    """
+    if not diarized_segments:
+        return []
+    
+    paragraphs = []
+    current_paragraph = {
+        'speaker': None,
+        'sentences': [],
+        'start': None,
+        'end': None,
+        'word_count': 0
+    }
+    
+    for segment in diarized_segments:
+        speaker = segment.get('speaker', 'SPEAKER_00')
+        text = segment.get('text', '').strip()
+        start = segment.get('start', segment.get('start_time', 0))
+        end = segment.get('end', segment.get('end_time', 0))
+        
+        if not text:
+            continue
+        
+        # Split into sentences if sentence-aware mode is enabled
+        if sentence_aware:
+            sentences = split_into_sentences(text)
+        else:
+            sentences = [text]
+        
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+            
+            # Calculate duration of current paragraph
+            paragraph_duration = 0
+            if current_paragraph['start'] is not None and current_paragraph['end'] is not None:
+                paragraph_duration = current_paragraph['end'] - current_paragraph['start']
+            
+            # Calculate silence gap
+            silence_gap = 0
+            if current_paragraph['end'] is not None:
+                silence_gap = start - current_paragraph['end']
+            
+            # Conditions to start a new paragraph:
+            # 1. Speaker changed
+            # 2. Exceeded max words
+            # 3. Exceeded max duration
+            # 4. Long silence gap (3+ seconds)
+            should_break = (
+                current_paragraph['speaker'] and (
+                    speaker != current_paragraph['speaker'] or  # Speaker change
+                    current_paragraph['word_count'] + sentence_words > max_words_per_paragraph or  # Word limit
+                    paragraph_duration > max_duration_seconds or  # Duration limit
+                    silence_gap > max_silence_gap  # Long pause
+                )
+            )
+            
+            if should_break:
+                # Finalize current paragraph
+                if current_paragraph['sentences']:
+                    paragraphs.append({
+                        'speaker': current_paragraph['speaker'],
+                        'text': ' '.join(current_paragraph['sentences']),
+                        'start': current_paragraph['start'],
+                        'end': current_paragraph['end'],
+                        'word_count': current_paragraph['word_count'],
+                        'duration': current_paragraph['end'] - current_paragraph['start']
+                    })
+                
+                # Start new paragraph
+                current_paragraph = {
+                    'speaker': speaker,
+                    'sentences': [sentence],
+                    'start': start,
+                    'end': end,
+                    'word_count': sentence_words
+                }
+            else:
+                # Add to current paragraph
+                if not current_paragraph['speaker']:
+                    current_paragraph['speaker'] = speaker
+                    current_paragraph['start'] = start
+                
+                current_paragraph['sentences'].append(sentence)
+                current_paragraph['end'] = end
+                current_paragraph['word_count'] += sentence_words
+    
+    # Add final paragraph
+    if current_paragraph['sentences']:
+        paragraphs.append({
+            'speaker': current_paragraph['speaker'],
+            'text': ' '.join(current_paragraph['sentences']),
+            'start': current_paragraph['start'],
+            'end': current_paragraph['end'],
+            'word_count': current_paragraph['word_count'],
+            'duration': current_paragraph['end'] - current_paragraph['start']
+        })
+    
+    logger.info(f"📝 Formatted {len(diarized_segments)} segments into {len(paragraphs)} readable paragraphs")
+    return paragraphs
+
+def format_paragraphs_as_text(paragraphs: List[Dict], include_timestamps: bool = True) -> str:
+    """
+    Convert paragraph dictionaries into human-readable formatted text.
+    
+    Args:
+        paragraphs: List of paragraph dictionaries from format_transcript_with_paragraphs()
+        include_timestamps: Whether to include timestamp headers (default: True)
+        
+    Returns:
+        Formatted transcript string
+    """
+    if not paragraphs:
+        return ""
+    
+    formatted_lines = []
+    
+    for para in paragraphs:
+        speaker = para.get('speaker', 'UNKNOWN').replace('_', ' ').title()
+        text = para.get('text', '').strip()
+        start = para.get('start', 0)
+        end = para.get('end', 0)
+        
+        if not text:
+            continue
+        
+        if include_timestamps:
+            # Format: SPEAKER_00 [00:01:30 - 00:01:56]
+            start_time = format_timestamp(start)
+            end_time = format_timestamp(end)
+            header = f"{speaker} [{start_time} - {end_time}]"
+            formatted_lines.append(f"{header}\n{text}")
+        else:
+            # Simple format: SPEAKER_00: text
+            formatted_lines.append(f"{speaker}: {text}")
+    
+    return '\n\n'.join(formatted_lines)
+
+def format_timestamp(seconds: float) -> str:
+    """
+    Convert seconds to HH:MM:SS or MM:SS format.
+    
+    Args:
+        seconds: Time in seconds
+        
+    Returns:
+        Formatted timestamp string
+    """
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
 def create_formatted_transcript(diarized_results: List[Dict]) -> str:
     """
-    Create a human-readable formatted transcript from diarized results
-    Groups consecutive segments by speaker and formats them nicely
+    Create a human-readable formatted transcript from diarized results.
+    Groups consecutive segments by speaker and formats them nicely.
+    
+    NOTE: This is the legacy simple formatter. For TurboScribe-style paragraphs,
+    use format_transcript_with_paragraphs() instead.
     """
     if not diarized_results:
         return ""
@@ -3962,6 +4168,34 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             f"{len(merged_result['transcript'].split()) if merged_result['transcript'] else 0} words"
         )
         
+        # Generate TurboScribe-style paragraph formatting
+        if merged_result["diarized_transcript"]:
+            try:
+                logger.info("📝 Generating TurboScribe-style paragraph formatting...")
+                paragraphs = format_transcript_with_paragraphs(
+                    merged_result["diarized_transcript"],
+                    max_words_per_paragraph=75,      # TurboScribe default
+                    max_duration_seconds=30.0,       # 30 second max per paragraph
+                    max_silence_gap=3.0,             # 3+ second pause = new paragraph
+                    sentence_aware=True              # Never break mid-sentence
+                )
+                
+                # Generate formatted text with timestamps
+                formatted_text = format_paragraphs_as_text(paragraphs, include_timestamps=True)
+                
+                # Add to result
+                merged_result["paragraphs"] = paragraphs
+                merged_result["formatted_transcript"] = formatted_text
+                
+                logger.info(f"✅ Created {len(paragraphs)} readable paragraphs from {len(merged_result['diarized_transcript'])} segments")
+            except Exception as para_error:
+                logger.warning(f"⚠️ Paragraph formatting failed: {para_error}, using simple format")
+                merged_result["paragraphs"] = []
+                merged_result["formatted_transcript"] = create_formatted_transcript(merged_result["diarized_transcript"])
+        else:
+            merged_result["paragraphs"] = []
+            merged_result["formatted_transcript"] = ""
+        
         # Calculate final statistics
         total_duration = current_time_offset
         word_count = len(merged_result["transcript"].split())
@@ -3971,6 +4205,7 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             "total_duration": total_duration,
             "word_count": word_count,
             "speaker_count": len(unique_speakers),
+            "paragraph_count": len(merged_result.get("paragraphs", [])),
             "total_segments": len(merged_result["diarized_transcript"]),
             "total_words": len(merged_result["word_timestamps"]),
             "total_characters": len(merged_result["transcript"]),
