@@ -2111,11 +2111,8 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 transcribe_params['temperature'] = temperature
                 logger.info(f"🌡️ Using temperature: {temperature} (improves accuracy ~5%)")
             
-            # VAD Configuration: Parakeet has built-in VAD (no config needed)
-            # NOTE: Parakeet automatically applies internal VAD during transcription
-            # No external configuration required - it just works!
-            # The built-in VAD filters silence/breaths while preserving all speech
-            logger.info("🎤 Using Parakeet's built-in VAD (automatic, no config needed)")
+            # No VAD configuration needed - Parakeet handles audio processing internally
+            logger.info("🎤 Using Parakeet's default audio processing")
             
             # Transcribe with parameters
             if transcribe_params:
@@ -2422,7 +2419,6 @@ def fill_transcript_gaps_with_parakeet(
         logger.info(f"🔍 Found {len(gaps)} gaps to fill: {gap_durations}")
         
         # Step 2: Load full audio once
-        # NOTE: Parakeet has built-in VAD that works automatically - no config needed!
         try:
             audio, sr = librosa.load(audio_path, sr=16000, mono=True)
             total_duration = len(audio) / sr
@@ -2452,14 +2448,12 @@ def fill_transcript_gaps_with_parakeet(
                 logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
                            f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
-                # Re-transcribe with Parakeet (built-in VAD works automatically)
-                # NOTE: Parakeet has internal VAD - no config needed, just call transcribe()
+                # Re-transcribe with Parakeet
                 gap_result = model.transcribe(
                     [tmp_path],              # List format (Parakeet requirement)
                     batch_size=1,            # Maximum quality for gap filling
                     return_hypotheses=False  # Get final text only
                 )
-                # Parakeet's built-in VAD automatically filters silence/breaths!
                 
                 # Process result
                 if gap_result and len(gap_result) > 0:
