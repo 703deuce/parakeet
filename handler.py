@@ -2453,15 +2453,33 @@ def fill_transcript_gaps_with_parakeet(
                 rms_energy = np.sqrt(np.mean(gap_audio**2))
                 logger.info(f"⚡ Gap audio: {len(gap_audio)} samples, RMS energy: {rms_energy:.4f}")
                 
-                # Re-transcribe with Parakeet - force transcription without VAD filtering
-                # Use return_hypotheses=True to get more aggressive transcription
-                gap_result = model.transcribe(
-                    [tmp_path],              # List format (Parakeet requirement)
-                    batch_size=1,            # Maximum quality for gap filling
-                    return_hypotheses=True   # Get full hypothesis data (bypasses VAD filtering)
-                )
+                # AGGRESSIVE TRANSCRIPTION: Temporarily disable confidence threshold
+                # This forces Parakeet to transcribe ALL audio, even low-confidence speech
+                original_confidence = None
+                try:
+                    # Try to lower the confidence threshold to accept everything
+                    if hasattr(model, 'cfg'):
+                        if hasattr(model.cfg, 'decoding'):
+                            if hasattr(model.cfg.decoding, 'confidence_threshold'):
+                                original_confidence = model.cfg.decoding.confidence_threshold
+                                model.cfg.decoding.confidence_threshold = -100.0  # Accept everything
+                                logger.info(f"  💪 Lowered confidence threshold: {original_confidence} → -100.0")
+                    
+                    # Force aggressive transcription with hypotheses and logprobs
+                    gap_result = model.transcribe(
+                        [tmp_path],              # List format (Parakeet requirement)
+                        batch_size=1,            # Maximum quality for gap filling
+                        return_hypotheses=True,  # Get full hypothesis data
+                        logprobs=True            # Force decoding even for low confidence
+                    )
+                    
+                finally:
+                    # Always restore the original threshold
+                    if original_confidence is not None:
+                        model.cfg.decoding.confidence_threshold = original_confidence
+                        logger.info(f"  ↩️  Restored confidence threshold to {original_confidence}")
                 
-                # Process result
+                # Process result - extract word timestamps from hypothesis
                 if gap_result and len(gap_result) > 0:
                     first_result = gap_result[0]
                     gap_word_timestamps = []
@@ -2501,7 +2519,7 @@ def fill_transcript_gaps_with_parakeet(
                             'words': gap_words
                         })
                     else:
-                        logger.warning(f"⚠️ Gap re-transcription returned no words in range")
+                        logger.info(f"⚪ Gap {gap_idx+1}: No speech detected (likely silence/noise only)")
                 
             except Exception as e:
                 logger.error(f"❌ Failed to fill gap: {e}")
