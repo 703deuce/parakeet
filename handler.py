@@ -2308,17 +2308,45 @@ def fill_transcript_gaps_with_parakeet(
             logger.error(f"❌ Could not load audio for gap filling: {e}")
             return transcription_result
         
-        # Step 3: Re-transcribe each gap
+        # Step 3: Re-transcribe each gap WITH RMS ENERGY CHECK
         filled_segments = []
+        skipped_count = 0
+        
         for gap_idx, gap in enumerate(gaps):
+            gap_start = gap['start']
+            gap_end = gap['end']
+            gap_duration = gap['duration']
+            
             # Add padding for context
-            extract_start = max(0, gap['start'] - gap_padding_seconds)
-            extract_end = min(total_duration, gap['end'] + gap_padding_seconds)
+            extract_start = max(0, gap_start - gap_padding_seconds)
+            extract_end = min(total_duration, gap_end + gap_padding_seconds)
             
             # Extract audio segment
             start_sample = int(extract_start * sr)
             end_sample = int(extract_end * sr)
             gap_audio = audio[start_sample:end_sample]
+            
+            # ✅ Calculate RMS energy to verify audio content (avoid transcribing true silence)
+            import numpy as np
+            rms_energy = np.sqrt(np.mean(gap_audio**2))
+            
+            logger.info(
+                f"🔄 Gap {gap_idx+1}/{len(gaps)}: "
+                f"{gap_start:.1f}s - {gap_end:.1f}s ({gap_duration:.1f}s), "
+                f"RMS energy: {rms_energy:.4f}"
+            )
+            
+            # ✅ Skip if RMS energy is too low (true silence/noise)
+            # Threshold: 0.01 = meaningful audio, below = silence/noise
+            if rms_energy < 0.01:
+                logger.info(
+                    f"⚪ Gap {gap_idx+1}: Skipping (RMS {rms_energy:.4f} < 0.01 - true silence)"
+                )
+                skipped_count += 1
+                continue
+            
+            # RMS energy is sufficient - attempt transcription
+            logger.info(f"  ⚡ Gap has significant audio energy - transcribing")
             
             # Save to temp file
             tmp_path = None
@@ -2326,9 +2354,6 @@ def fill_transcript_gaps_with_parakeet(
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
                     sf.write(tmp.name, gap_audio, sr)
                     tmp_path = tmp.name
-                
-                logger.info(f"🔄 Re-transcribing gap {gap_idx+1}/{len(gaps)}: "
-                           f"{gap['start']:.1f}s - {gap['end']:.1f}s ({gap['duration']:.1f}s)")
                 
                 # Re-transcribe with Parakeet using the loaded model (batch_size=1 for max quality)
                 gap_result = model.transcribe(
@@ -2370,14 +2395,20 @@ def fill_transcript_gaps_with_parakeet(
                             gap_words.append(w)
                     
                     if gap_words:
-                        logger.info(f"✅ Filled gap with {len(gap_words)} words: "
-                                   f"\"{' '.join([w.get('word', w.get('text', '')) for w in gap_words[:5]])}...\"")
+                        preview_words = ' '.join([w.get('word', w.get('text', '')) for w in gap_words[:5]])
+                        logger.info(
+                            f"✅ Gap {gap_idx+1} filled: '{preview_words}...' "
+                            f"({len(gap_words)} words)"
+                        )
                         filled_segments.append({
                             'gap': gap,
                             'words': gap_words
                         })
                     else:
-                        logger.warning(f"⚠️ Gap re-transcription returned no words in range")
+                        logger.info(
+                            f"⚪ Gap {gap_idx+1}: No words in range (RMS {rms_energy:.4f}, "
+                            f"but Parakeet filtered it)"
+                        )
                 
             except Exception as e:
                 logger.error(f"❌ Failed to fill gap: {e}")
@@ -2412,10 +2443,14 @@ def fill_transcript_gaps_with_parakeet(
                 if 'transcript' in transcription_result:
                     transcription_result['transcript'] = updated_text
             
-            logger.info(f"✅ Filled {len(filled_segments)} gaps, total words: "
-                       f"{len(timestamps)} → {len(new_timestamps)}")
+            logger.info(
+                f"🎉 Filled {len(filled_segments)} gaps, skipped {skipped_count} silent gaps, "
+                f"total words: {len(timestamps)} → {len(new_timestamps)}"
+            )
         else:
-            logger.warning("⚠️ Could not fill any gaps")
+            logger.warning(
+                f"⚠️ Could not fill any gaps (skipped {skipped_count} silent gaps)"
+            )
         
         return transcription_result
         
