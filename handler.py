@@ -2320,16 +2320,13 @@ def fill_transcript_gaps_with_parakeet(
             gap_end = gap['end']
             gap_duration = gap['duration']
             
-            # Add padding for context
-            extract_start = max(0, gap_start - gap_padding_seconds)
-            extract_end = min(total_duration, gap_end + gap_padding_seconds)
+            # 🔧 FIX: Extract ONLY the gap (no padding) to avoid Parakeet VAD filtering
+            # Padding was causing Parakeet to see silence and filter out the actual speech!
+            gap_start_sample = int(gap_start * sr)
+            gap_end_sample = int(gap_end * sr)
+            gap_audio = audio[gap_start_sample:gap_end_sample]
             
-            # Extract audio segment
-            start_sample = int(extract_start * sr)
-            end_sample = int(extract_end * sr)
-            gap_audio = audio[start_sample:end_sample]
-            
-            # ✅ Calculate RMS energy to verify audio content (avoid transcribing true silence)
+            # ✅ Calculate RMS energy on the actual gap (not padded audio)
             import numpy as np
             rms_energy = np.sqrt(np.mean(gap_audio**2))
             
@@ -2349,7 +2346,7 @@ def fill_transcript_gaps_with_parakeet(
                 continue
             
             # RMS energy is sufficient - attempt transcription
-            logger.info(f"  ⚡ Gap has significant audio energy - transcribing")
+            logger.info(f"  ⚡ Gap has audio energy - transcribing {len(gap_audio)/sr:.1f}s")
             
             # Save to temp file
             tmp_path = None
@@ -2379,15 +2376,16 @@ def fill_transcript_gaps_with_parakeet(
                         gap_word_timestamps = first_result.get('word_timestamps', [])
                     
                     # Adjust timestamps to match original audio position
+                    # Use gap_start (not extract_start) since we're transcribing the gap without padding
                     for word_data in gap_word_timestamps:
                         if 'start' in word_data:
-                            word_data['start'] += extract_start
+                            word_data['start'] += gap_start
                         if 'end' in word_data:
-                            word_data['end'] += extract_start
+                            word_data['end'] += gap_start
                         if 'start_time' in word_data:
-                            word_data['start_time'] += extract_start
+                            word_data['start_time'] += gap_start
                         if 'end_time' in word_data:
-                            word_data['end_time'] += extract_start
+                            word_data['end_time'] += gap_start
                     
                     # Only keep words that fall within the actual gap
                     gap_words = []
