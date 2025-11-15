@@ -2434,6 +2434,28 @@ def fill_transcript_gaps_with_parakeet(
             
             transcription_result['word_timestamps'] = new_timestamps
             
+            # ✨ CRITICAL: Assign speakers to gap-filled words
+            # Gap-filled words were added AFTER initial speaker assignment, so they have no speaker labels
+            if 'diarized_segments' in transcription_result and transcription_result.get('diarized_segments'):
+                logger.info("🔄 Assigning speakers to ALL words (including gap-filled)...")
+                diarized_segments = transcription_result['diarized_segments']
+                
+                # Re-assign speaker to each word based on time overlap with diarization segments
+                for word in new_timestamps:
+                    word_start = word.get('start', word.get('start_time', 0))
+                    word_end = word.get('end', word.get('end_time', 0))
+                    
+                    # Find best matching speaker for this word's time range
+                    best_speaker = find_best_speaker_for_time_segment(
+                        diarized_segments,
+                        word_start,
+                        word_end
+                    )
+                    
+                    word['speaker'] = best_speaker
+                
+                logger.info(f"✅ Assigned speakers to all {len(new_timestamps)} words (including {sum(len(seg['words']) for seg in filled_segments)} gap-filled)")
+            
             # Update text if present
             if 'text' in transcription_result or 'transcript' in transcription_result:
                 all_words = []
