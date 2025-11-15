@@ -2434,62 +2434,8 @@ def fill_transcript_gaps_with_parakeet(
             
             transcription_result['word_timestamps'] = new_timestamps
             
-            # ✨ CRITICAL: Rebuild segment_timestamps to include gap-filled words
-            # The system uses segments for diarized output, so gap-filled words must be in segments
-            logger.info(f"🔄 Rebuilding segment timestamps to include gap-filled words...")
-            
-            # Rebuild segments from the updated word timestamps
-            new_segment_timestamps = []
-            current_segment = None
-            segment_gap_threshold = 1.0  # 1 second gap starts new segment
-            
-            for i, word_ts in enumerate(new_timestamps):
-                if isinstance(word_ts, dict) and ('word' in word_ts or 'text' in word_ts):
-                    word = word_ts.get('word', word_ts.get('text', ''))
-                    start = word_ts.get('start', word_ts.get('start_time', 0))
-                    end = word_ts.get('end', word_ts.get('end_time', start + 0.1))
-                    
-                    if not current_segment:
-                        # Start new segment
-                        current_segment = [{'word': word, 'start': start, 'end': end}]
-                    else:
-                        # Check if we should continue or start new segment
-                        last_end = current_segment[-1]['end']
-                        gap = start - last_end
-                        last_word = current_segment[-1]['word']
-                        is_sentence_end = last_word.rstrip().endswith(('.', '!', '?'))
-                        
-                        if gap < segment_gap_threshold and not is_sentence_end:
-                            # Continue current segment
-                            current_segment.append({'word': word, 'start': start, 'end': end})
-                        else:
-                            # Finish current segment and start new one
-                            segment_text = ' '.join([w['word'] for w in current_segment])
-                            new_segment_timestamps.append({
-                                'segment': segment_text,
-                                'text': segment_text,
-                                'start': current_segment[0]['start'],
-                                'end': current_segment[-1]['end'],
-                                'start_offset': word_ts.get('start_offset', 0),
-                                'end_offset': word_ts.get('end_offset', 0)
-                            })
-                            current_segment = [{'word': word, 'start': start, 'end': end}]
-            
-            # Don't forget the last segment
-            if current_segment:
-                segment_text = ' '.join([w['word'] for w in current_segment])
-                new_segment_timestamps.append({
-                    'segment': segment_text,
-                    'text': segment_text,
-                    'start': current_segment[0]['start'],
-                    'end': current_segment[-1]['end']
-                })
-            
-            transcription_result['segment_timestamps'] = new_segment_timestamps
-            logger.info(f"✅ Rebuilt {len(new_segment_timestamps)} segments including gap-filled words")
-            
-            # Note: Speaker assignment for gap-filled words happens later in the pipeline
-            # after diarization is complete (in process_long_audio_with_chunking or process_downloaded_audio)
+            # Note: Speaker assignment happens later in the pipeline using ONLY word_timestamps
+            # The diarized output is built by grouping words by speaker (no need for segment_timestamps)
             
             # Update text if present
             if 'text' in transcription_result or 'transcript' in transcription_result:
@@ -4476,66 +4422,63 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         logger.info(f"🔍 DEBUG - transcription_result text preview: {transcription_result.get('text', '')[:200]}...")
         
         if transcription_result.get('text'):
-            # Use segment-level timestamps for matching
-            segment_timestamps = transcription_result.get('segment_timestamps', [])
+            # ✨ SIMPLIFIED: Use ONLY word-level timestamps (includes gap-filled words)
+            word_timestamps = transcription_result.get('word_timestamps', [])
             
-            diarized_results = []
-            
-            if segment_timestamps:
-                logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
+            if word_timestamps and merged_segments:
+                logger.info(f"🎯 Assigning speakers to {len(word_timestamps)} words (including gap-filled)...")
                 
-                # Match each segment timestamp to a speaker from merged segments
-                for segment in segment_timestamps:
-                    segment_start = segment.get('start', segment.get('start_time', 0))
-                    segment_end = segment.get('end', segment.get('end_time', 0))
-                    segment_text = segment.get('text', '')
+                # Assign speaker to each word based on pyannote speaker segments
+                for word in word_timestamps:
+                    word_start = word.get('start', word.get('start_time', 0))
+                    word_end = word.get('end', word.get('end_time', 0))
                     
-                    # Find the best matching speaker for this time segment
+                    # Find best matching speaker for this word's time range
                     best_speaker = find_best_speaker_for_time_segment(
-                        merged_segments, segment_start, segment_end
+                        merged_segments,
+                        word_start,
+                        word_end
                     )
                     
-                    if best_speaker:
-                        diarized_results.append({
-                            "speaker": best_speaker,
-                            "start_time": segment_start,
-                            "end_time": segment_end,
-                            "text": segment_text
-                        })
+                    word['speaker'] = best_speaker if best_speaker else "Speaker_00"
+                
+                logger.info(f"✅ Assigned speakers to all {len(word_timestamps)} words")
+                
+                # Build diarized_results from words (group consecutive words by speaker)
+                diarized_results = []
+                current_speaker_segment = None
+                
+                for word in word_timestamps:
+                    word_text = word.get('word', word.get('text', ''))
+                    word_speaker = word.get('speaker', 'Speaker_00')
+                    word_start = word.get('start', word.get('start_time', 0))
+                    word_end = word.get('end', word.get('end_time', 0))
+                    
+                    if not current_speaker_segment or current_speaker_segment['speaker'] != word_speaker:
+                        # Start new speaker segment
+                        if current_speaker_segment:
+                            diarized_results.append(current_speaker_segment)
+                        
+                        current_speaker_segment = {
+                            'speaker': word_speaker,
+                            'start_time': word_start,
+                            'end_time': word_end,
+                            'text': word_text
+                        }
                     else:
-                        # Fallback to first speaker if no match found
-                        diarized_results.append({
-                            "speaker": "Speaker_00",
-                            "start_time": segment_start,
-                            "end_time": segment_end,
-                            "text": segment_text
-                        })
+                        # Continue current speaker segment
+                        current_speaker_segment['end_time'] = word_end
+                        current_speaker_segment['text'] += ' ' + word_text
                 
-                logger.info(f"✅ Successfully assigned speakers to {len(diarized_results)} segments")
+                # Don't forget the last segment
+                if current_speaker_segment:
+                    diarized_results.append(current_speaker_segment)
                 
-                # ✨ CRITICAL: Also assign speakers to word-level timestamps (including gap-filled words)
-                word_timestamps = transcription_result.get('word_timestamps', [])
-                if word_timestamps and merged_segments:
-                    logger.info(f"🎯 Assigning speakers to {len(word_timestamps)} words (including gap-filled)...")
-                    
-                    for word in word_timestamps:
-                        word_start = word.get('start', word.get('start_time', 0))
-                        word_end = word.get('end', word.get('end_time', 0))
-                        
-                        # Find best matching speaker for this word's time range
-                        best_speaker = find_best_speaker_for_time_segment(
-                            merged_segments,
-                            word_start,
-                            word_end
-                        )
-                        
-                        word['speaker'] = best_speaker if best_speaker else "Speaker_00"
-                    
-                    logger.info(f"✅ Assigned speakers to all {len(word_timestamps)} words")
+                logger.info(f"✅ Built {len(diarized_results)} speaker segments from {len(word_timestamps)} words")
                 
             else:
                 # Fallback: assign entire transcript to first speaker
-                logger.warning("⚠️ No segment timestamps available, assigning entire transcript to first speaker")
+                logger.warning("⚠️ No word timestamps available, assigning entire transcript to first speaker")
                 diarized_results = [{
                     "speaker": "Speaker_00",
                     "start_time": 0,
