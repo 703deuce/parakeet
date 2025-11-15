@@ -2434,6 +2434,60 @@ def fill_transcript_gaps_with_parakeet(
             
             transcription_result['word_timestamps'] = new_timestamps
             
+            # ✨ CRITICAL: Rebuild segment_timestamps to include gap-filled words
+            # The system uses segments for diarized output, so gap-filled words must be in segments
+            logger.info(f"🔄 Rebuilding segment timestamps to include gap-filled words...")
+            
+            # Rebuild segments from the updated word timestamps
+            new_segment_timestamps = []
+            current_segment = None
+            segment_gap_threshold = 1.0  # 1 second gap starts new segment
+            
+            for i, word_ts in enumerate(new_timestamps):
+                if isinstance(word_ts, dict) and ('word' in word_ts or 'text' in word_ts):
+                    word = word_ts.get('word', word_ts.get('text', ''))
+                    start = word_ts.get('start', word_ts.get('start_time', 0))
+                    end = word_ts.get('end', word_ts.get('end_time', start + 0.1))
+                    
+                    if not current_segment:
+                        # Start new segment
+                        current_segment = [{'word': word, 'start': start, 'end': end}]
+                    else:
+                        # Check if we should continue or start new segment
+                        last_end = current_segment[-1]['end']
+                        gap = start - last_end
+                        last_word = current_segment[-1]['word']
+                        is_sentence_end = last_word.rstrip().endswith(('.', '!', '?'))
+                        
+                        if gap < segment_gap_threshold and not is_sentence_end:
+                            # Continue current segment
+                            current_segment.append({'word': word, 'start': start, 'end': end})
+                        else:
+                            # Finish current segment and start new one
+                            segment_text = ' '.join([w['word'] for w in current_segment])
+                            new_segment_timestamps.append({
+                                'segment': segment_text,
+                                'text': segment_text,
+                                'start': current_segment[0]['start'],
+                                'end': current_segment[-1]['end'],
+                                'start_offset': word_ts.get('start_offset', 0),
+                                'end_offset': word_ts.get('end_offset', 0)
+                            })
+                            current_segment = [{'word': word, 'start': start, 'end': end}]
+            
+            # Don't forget the last segment
+            if current_segment:
+                segment_text = ' '.join([w['word'] for w in current_segment])
+                new_segment_timestamps.append({
+                    'segment': segment_text,
+                    'text': segment_text,
+                    'start': current_segment[0]['start'],
+                    'end': current_segment[-1]['end']
+                })
+            
+            transcription_result['segment_timestamps'] = new_segment_timestamps
+            logger.info(f"✅ Rebuilt {len(new_segment_timestamps)} segments including gap-filled words")
+            
             # Note: Speaker assignment for gap-filled words happens later in the pipeline
             # after diarization is complete (in process_long_audio_with_chunking or process_downloaded_audio)
             
