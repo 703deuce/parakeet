@@ -2387,18 +2387,24 @@ def fill_transcript_gaps_with_parakeet(
                         if 'end_time' in word_data:
                             word_data['end_time'] += gap_start
                     
-                    # Only keep words that fall within the actual gap
+                    # 🔧 FIX #3: Better word filtering - keep words that overlap with gap at all
+                    # Old logic was too strict and filtered out boundary words
                     gap_words = []
                     for w in gap_word_timestamps:
                         w_start = w.get('start', w.get('start_time', 0))
                         w_end = w.get('end', w.get('end_time', 0))
-                        if gap['start'] <= w_start <= gap['end'] or gap['start'] <= w_end <= gap['end']:
+                        
+                        # Keep word if it overlaps with gap at all (not if it's completely outside)
+                        if not (w_end < gap['start'] or w_start > gap['end']):
                             gap_words.append(w)
                     
                     if gap_words:
-                        preview_words = ' '.join([w.get('word', w.get('text', '')) for w in gap_words[:5]])
+                        preview_words = ' '.join([w.get('word', w.get('text', '')) for w in gap_words[:8]])
+                        if len(gap_words) > 8:
+                            preview_words += '...'
+                        
                         logger.info(
-                            f"✅ Gap {gap_idx+1} filled: '{preview_words}...' "
+                            f"   ✅ Gap {gap_idx+1} filled: \"{preview_words}\" "
                             f"({len(gap_words)} words)"
                         )
                         filled_segments.append({
@@ -2406,13 +2412,10 @@ def fill_transcript_gaps_with_parakeet(
                             'words': gap_words
                         })
                     else:
-                        logger.info(
-                            f"⚪ Gap {gap_idx+1}: No words in range (RMS {rms_energy:.4f}, "
-                            f"but Parakeet filtered it)"
-                        )
+                        logger.info(f"   ⚪ No words returned by Parakeet")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to fill gap: {e}")
+                logger.error(f"   ❌ Failed to fill gap: {e}")
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     try:
