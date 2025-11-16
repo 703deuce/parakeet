@@ -2482,6 +2482,12 @@ def fill_transcript_gaps_with_parakeet(
                             gap_words.append(w)
                     
                     if gap_words:
+                        # Mark words as coming from gap filling
+                        for _w in gap_words:
+                            try:
+                                _w['from_gap_fill'] = True
+                            except Exception:
+                                pass
                         preview_words = ' '.join([w.get('word', w.get('text', '')) for w in gap_words[:8]])
                         if len(gap_words) > 8:
                             preview_words += '...'
