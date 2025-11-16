@@ -377,6 +377,49 @@ def load_model():
             except Exception as force_conf_error:
                 logger.warning(f"⚠️ Could not force decoding confidence settings: {force_conf_error}")
             
+            # FORCE: Disable CTC blank filtering and decoder penalties, and disable text normalization filters
+            try:
+                from omegaconf import open_dict
+                if hasattr(model, 'cfg'):
+                    # Decoder-level blank/penalties
+                    if hasattr(model.cfg, 'decoder'):
+                        with open_dict(model.cfg.decoder):
+                            if hasattr(model.cfg.decoder, 'blank_as_pad'):
+                                model.cfg.decoder.blank_as_pad = False
+                            if hasattr(model.cfg.decoder, 'confidence_method'):
+                                model.cfg.decoder.confidence_method = None
+                        logger.info("✅ Disabled CTC blank-as-pad and confidence_method")
+                    # Decoding penalties and normalization
+                    if hasattr(model.cfg, 'decoding'):
+                        with open_dict(model.cfg.decoding):
+                            if hasattr(model.cfg.decoding, 'beam_alpha'):
+                                model.cfg.decoding.beam_alpha = 0.0
+                            if hasattr(model.cfg.decoding, 'beam_beta'):
+                                model.cfg.decoding.beam_beta = 0.0
+                            if hasattr(model.cfg.decoding, 'word_insertion_penalty'):
+                                model.cfg.decoding.word_insertion_penalty = 0.0
+                            if hasattr(model.cfg.decoding, 'length_penalty'):
+                                model.cfg.decoding.length_penalty = 0.0
+                            if hasattr(model.cfg.decoding, 'apply_text_normalization'):
+                                model.cfg.decoding.apply_text_normalization = False
+                            if hasattr(model.cfg.decoding, 'filter_duplicates'):
+                                model.cfg.decoding.filter_duplicates = False
+                            if hasattr(model.cfg.decoding, 'remove_blank_tokens'):
+                                model.cfg.decoding.remove_blank_tokens = False
+                        logger.info("✅ Disabled decoder penalties and text normalization filters")
+                    # Preprocessor silence trimming
+                    if hasattr(model, 'preprocessor'):
+                        try:
+                            if hasattr(model.preprocessor, 'trim_silence'):
+                                model.preprocessor.trim_silence = False
+                            if hasattr(model.preprocessor, 'normalize'):
+                                model.preprocessor.normalize = 'per_feature'
+                            logger.info("✅ Disabled preprocessor silence trimming; normalize=per_feature")
+                        except Exception as pre_err:
+                            logger.warning(f"⚠️ Could not modify preprocessor: {pre_err}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not disable CTC filtering/penalties/normalization: {e}")
+            
             logger.info("🎯 Model configuration complete - ready for maximum quality transcription")
         except Exception as config_error:
             logger.warning(f"⚠️ Some model configuration failed (non-critical): {config_error}")
@@ -1960,6 +2003,12 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
                 'strategy': 'greedy',         # FORCE: greedy decoding for RNNT
                 'compute_timestamps': True,
                 'return_best_hypothesis': True,
+                # Process quiet audio and granular frames (if supported by backend)
+                'amp_min_db': -100.0,
+                'normalize': 'per_feature',
+                'frame_len': 0.01,
+                'frame_overlap': 0.005,
+                'sample_rate': 16000,
             })
             
             # Try to set confidence thresholds (parameter names vary by NeMo version)
@@ -2237,8 +2286,8 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             result = fill_transcript_gaps_with_parakeet(
                 transcription_result=result,
                 audio_path=mono_audio_path,
-                min_gap_seconds=0.5,  # Aggressive gap detection for max quality
-                gap_padding_seconds=0.75  # Extra context for better accuracy
+                min_gap_seconds=0.25,  # Ultra-aggressive gap detection
+                gap_padding_seconds=1.0  # More context for better accuracy
             )
         
         # Clean up temporary mono file AFTER gap filling (needs the file to exist)
@@ -2267,8 +2316,8 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
 def fill_transcript_gaps_with_parakeet(
     transcription_result: dict,
     audio_path: str,
-    min_gap_seconds: float = 0.5,
-    gap_padding_seconds: float = 0.75
+    min_gap_seconds: float = 0.25,
+    gap_padding_seconds: float = 1.0
 ) -> dict:
     """
     Detect gaps in transcription timestamps and re-transcribe using Parakeet.
