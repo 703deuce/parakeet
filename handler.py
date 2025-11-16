@@ -363,6 +363,20 @@ def load_model():
                 except Exception as decode_error:
                     logger.warning(f"⚠️ Could not configure decoding strategy: {decode_error}")
             
+            # FORCE: Configure model to never filter out low-confidence words at load time
+            try:
+                if hasattr(model, 'cfg') and hasattr(model.cfg, 'decoding'):
+                    from omegaconf import open_dict
+                    with open_dict(model.cfg.decoding):
+                        # Disable confidence filtering and ensure best hypothesis is returned
+                        if hasattr(model.cfg.decoding, 'confidence_threshold'):
+                            model.cfg.decoding.confidence_threshold = 0.0
+                        if hasattr(model.cfg.decoding, 'return_best_hypothesis'):
+                            model.cfg.decoding.return_best_hypothesis = True
+                    logger.info("✅ FORCED: Model decoding set to output all words (confidence_threshold=0.0)")
+            except Exception as force_conf_error:
+                logger.warning(f"⚠️ Could not force decoding confidence settings: {force_conf_error}")
+            
             logger.info("🎯 Model configuration complete - ready for maximum quality transcription")
         except Exception as config_error:
             logger.warning(f"⚠️ Some model configuration failed (non-critical): {config_error}")
@@ -1943,6 +1957,9 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             transcribe_params.update({
                 'return_hypotheses': False,  # We want the best path, not alternatives
                 'preserve_alignments': True,  # Keep all alignment information
+                'strategy': 'greedy',         # FORCE: greedy decoding for RNNT
+                'compute_timestamps': True,
+                'return_best_hypothesis': True,
             })
             
             # Try to set confidence thresholds (parameter names vary by NeMo version)
