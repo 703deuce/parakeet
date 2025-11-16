@@ -1382,9 +1382,32 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 call_params['max_speakers'] = max_speakers
                 logger.info(f"📊 Using min_speakers={min_speakers}, max_speakers={max_speakers}")
             
-            # Merge pipeline_params (segmentation/clustering) into call_params
-            if pipeline_params:
-                call_params.update(pipeline_params)
+            # Apply segmentation/clustering params directly to pipeline internals if available
+            try:
+                if segmentation_params and hasattr(diarization_model, '_segmentation'):
+                    seg = diarization_model._segmentation
+                    if hasattr(seg, 'threshold') and 'threshold' in segmentation_params:
+                        seg.threshold = segmentation_params['threshold']
+                    if hasattr(seg, 'min_duration_off') and 'min_duration_off' in segmentation_params:
+                        seg.min_duration_off = segmentation_params['min_duration_off']
+                    if hasattr(seg, 'min_duration_on') and 'min_duration_on' in segmentation_params:
+                        seg.min_duration_on = segmentation_params['min_duration_on']
+                    logger.info("🔧 Applied segmentation params to pipeline internals")
+                if clustering_params and hasattr(diarization_model, '_clustering'):
+                    cl = diarization_model._clustering
+                    if 'method' in clustering_params and hasattr(cl, 'method'):
+                        cl.method = clustering_params['method']
+                    if 'threshold' in clustering_params and hasattr(cl, 'threshold'):
+                        cl.threshold = clustering_params['threshold']
+                    if 'min_cluster_size' in clustering_params and hasattr(cl, 'min_cluster_size'):
+                        cl.min_cluster_size = clustering_params['min_cluster_size']
+                    logger.info("🔧 Applied clustering params to pipeline internals")
+            except Exception as apply_err:
+                logger.warning(f"⚠️ Could not apply internal diarization params: {apply_err}")
+
+            # Do NOT pass segmentation/clustering/exclusive via kwargs; keep only supported keys
+            allowed_keys = {'num_speakers', 'min_speakers', 'max_speakers'}
+            call_params = {k: v for k, v in call_params.items() if k in allowed_keys}
             
             # Create a wrapper function that keeps TF32 enabled during execution using TF32KeepAlive
             def run_diarization_with_tf32():
