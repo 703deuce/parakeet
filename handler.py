@@ -1248,39 +1248,7 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
             pipeline_params["clustering"] = clustering_params
             logger.info(f"📊 Using custom clustering parameters: {clustering_params}")
         
-        # If user did not provide params, set optimized defaults for ALL audio
-        if not segmentation_params:
-            segmentation_params = {
-                "threshold": 0.4,
-                "min_duration_off": 0.1,
-                "min_duration_on": 0.0,
-            }
-            pipeline_params["segmentation"] = segmentation_params
-            logger.info(f"🔧 Using default optimized segmentation params: {segmentation_params}")
-
-        if not clustering_params:
-            clustering_params = {
-                "method": "centroid",
-                "min_cluster_size": 12,
-                "threshold": 0.68,
-            }
-            pipeline_params["clustering"] = clustering_params
-            logger.info(f"🔧 Using default optimized clustering params: {clustering_params}")
-        
-        # For very short audio, apply extra-relaxed thresholds (only if defaults still in use)
-        if audio_analysis.get('duration', 0) < 10 and not pipeline_params:
-            logger.info("🔧 Using relaxed thresholds for short audio")
-            pipeline_params = {
-                "segmentation": {
-                    "min_duration_off": 0.1,  # Reduced from default 0.5826
-                    "threshold": 0.4,         # Reduced from default 0.4697
-                },
-                "clustering": {
-                    "method": "centroid",
-                    "min_cluster_size": 1,    # Allow single-segment clusters
-                    "threshold": 0.6,         # Reduced from default 0.7153
-                }
-        }
+        # No automatic overrides: rely on pyannote defaults unless user provided params
         
         # Ensure audio is mono for diarization
         mono_audio_path = ensure_mono_audio(audio_path)
