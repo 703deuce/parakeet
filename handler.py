@@ -2757,9 +2757,11 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
                     word_end = word.get('end', word.get('end_time', 0))
                     
                     if current_segment and current_segment['speaker'] == word_speaker:
+                        # Continue current speaker segment
                         current_segment['end_time'] = word_end
                         current_segment['text'] += ' ' + word_text
-                else:
+                    else:
+                        # Start new speaker segment
                         if current_segment:
                             diarized_results.append(current_segment)
                         current_segment = {
