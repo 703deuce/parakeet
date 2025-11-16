@@ -1223,16 +1223,17 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
         if audio_analysis.get('is_too_short', False):
             logger.warning("⚠️ Audio is very short (<2s) - diarization may be unreliable")
         
-        # Configure pipeline internals BEFORE running
+        # Configure pipeline internals BEFORE running (only if user provided custom params)
         try:
-            if segmentation_params or clustering_params:
-                logger.info("🎯 Applying custom quality settings to pyannote...")
+            if segmentation_params is not None or clustering_params is not None:
+                logger.info("🎯 Applying user-provided custom parameters to pyannote...")
                 configure_diarization_for_quality(segmentation_params, clustering_params)
             else:
-                logger.info("🎯 Applying optimal default settings to pyannote...")
-                configure_diarization_for_quality()
+                logger.info("📊 Using pyannote 3.1 built-in defaults (recommended)")
+                logger.info("💡 Defaults prevent over-segmentation and are stable")
+                # Do not call configure_diarization_for_quality() — let defaults stand
         except Exception as cfg_err:
-            logger.warning(f"⚠️ Could not configure diarization pipeline: {cfg_err}")
+            logger.warning(f"⚠️ Diarization configuration warning: {cfg_err}")
 
         # Build diarization parameters from user-provided settings (kept for logging)
         pipeline_params = {}
@@ -5193,71 +5194,42 @@ def configure_diarization_for_quality(
         return False
 
     try:
-        logger.info("🎯 Configuring pyannote for maximum quality...")
+        logger.info("🎯 Configuring pyannote 3.1 with custom parameters...")
+        # NOTE: No defaults here — if none provided, caller should not invoke this.
 
-        # Optimal defaults (pyannote 3.1)
-        if segmentation_params is None:
-            segmentation_params = {
-                'threshold': 0.4442,
-                'min_duration_off': 0.0,
-                'min_duration_on': 0.0,
-            }
-            logger.info(f"📊 Using optimal segmentation params: {segmentation_params}")
+        if segmentation_params and hasattr(diarization_model, '_segmentation') and diarization_model._segmentation:
+            seg = diarization_model._segmentation
+            logger.info(f"📊 Configuring segmentation: {segmentation_params}")
+            for param, value in (segmentation_params or {}).items():
+                try:
+                    if hasattr(seg, f'_{param}'):
+                        setattr(seg, f'_{param}', value)
+                        logger.info(f"✅ Set segmentation._{param} = {value}")
+                    elif hasattr(seg, param):
+                        setattr(seg, param, value)
+                        logger.info(f"✅ Set segmentation.{param} = {value}")
+                    else:
+                        logger.warning(f"⚠️ Segmentation param '{param}' not found")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not set segmentation.{param}: {e}")
+        elif segmentation_params:
+            logger.warning("⚠️ No _segmentation attribute found on diarization model")
 
-        if clustering_params is None:
-            clustering_params = {
-                'method': 'centroid',
-                'min_cluster_size': 15,
-                'threshold': 0.7153,
-            }
-            logger.info(f"📊 Using optimal clustering params: {clustering_params}")
+        if clustering_params and clust is not None:
+            logger.info(f"📊 Configuring clustering: {clustering_params}")
+            for param, value in (clustering_params or {}).items():
+                try:
+                    if hasattr(clust, param):
+                        setattr(clust, param, value)
+                        logger.info(f"✅ Set clustering.{param} = {value}")
+                    else:
+                        logger.warning(f"⚠️ Clustering param '{param}' not found")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not set clustering.{param}: {e}")
+        elif clustering_params:
+            logger.warning("⚠️ No clustering attribute found on diarization model")
 
-        # Configure segmentation
-        try:
-            if hasattr(diarization_model, '_segmentation') and diarization_model._segmentation:
-                seg = diarization_model._segmentation
-                logger.info(f"📊 Found segmentation model: {type(seg).__name__}")
-                for param, value in segmentation_params.items():
-                    try:
-                        if hasattr(seg, f'_{param}'):
-                            setattr(seg, f'_{param}', value)
-                            logger.info(f"✅ Set segmentation._{param} = {value}")
-                        elif hasattr(seg, param):
-                            setattr(seg, param, value)
-                            logger.info(f"✅ Set segmentation.{param} = {value}")
-                        else:
-                            logger.warning(f"⚠️ Segmentation param '{param}' not found")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not set segmentation.{param}: {e}")
-            else:
-                logger.warning("⚠️ No _segmentation attribute found on diarization model")
-        except Exception as seg_err:
-            logger.warning(f"⚠️ Segmentation configuration error: {seg_err}")
-
-        # Configure clustering (pyannote may expose as 'klustering')
-        try:
-            clust = None
-            if hasattr(diarization_model, 'klustering') and diarization_model.klustering:
-                clust = diarization_model.klustering
-            elif hasattr(diarization_model, '_clustering'):
-                clust = diarization_model._clustering
-            if clust is not None:
-                logger.info(f"📊 Found clustering model: {type(clust).__name__}")
-                for param, value in clustering_params.items():
-                    try:
-                        if hasattr(clust, param):
-                            setattr(clust, param, value)
-                            logger.info(f"✅ Set clustering.{param} = {value}")
-                        else:
-                            logger.warning(f"⚠️ Clustering param '{param}' not found")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not set clustering.{param}: {e}")
-            else:
-                logger.warning("⚠️ No clustering attribute found on diarization model")
-        except Exception as clu_err:
-            logger.warning(f"⚠️ Clustering configuration error: {clu_err}")
-
-        logger.info("✅ Pyannote configured for maximum quality")
+        logger.info("✅ Custom pyannote parameters applied")
         return True
 
     except Exception as e:
