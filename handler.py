@@ -10,92 +10,9 @@ if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-# CRITICAL: Monkey-patch pyannote's reproducibility module BEFORE importing pyannote
-# This prevents pyannote from disabling TF32 during pipeline execution
-# pyannote disables TF32 in its reproducibility.py module when the pipeline is called
+# Minimal stub; previously patched pyannote reproducibility. No-op for stability.
 def _patch_pyannote_reproducibility():
-    """Patch pyannote's reproducibility module to preserve TF32"""
-    try:
-        import sys
-        import warnings
-        
-        # Store original warn function
-        _original_warn = warnings.warn
-        
-        # Create a custom warn function that filters out TF32 disable warnings
-        def _filtered_warn(message, *args, **kwargs):
-            if 'TensorFloat-32' in str(message) or 'TF32' in str(message):
-                # Silently ignore TF32 warnings - we want TF32 enabled!
-                return
-            _original_warn(message, *args, **kwargs)
-        
-        # Patch warnings.warn temporarily while importing pyannote
-        warnings.warn = _filtered_warn
-        
-        # Try to import and patch pyannote's reproducibility module
-        try:
-            import pyannote.audio.utils.reproducibility as pyannote_reproducibility
-            
-            # Patch the module to prevent TF32 disabling and warning
-            # Store original warn if it exists in the module
-            if hasattr(pyannote_reproducibility, 'warnings'):
-                original_module_warn = pyannote_reproducibility.warnings.warn
-                def no_tf32_warn(*args, **kwargs):
-                    # Check if this is a TF32 warning and suppress it
-                    if args and ('TensorFloat-32' in str(args[0]) or 'TF32' in str(args[0])):
-                        return
-                    original_module_warn(*args, **kwargs)
-                pyannote_reproducibility.warnings.warn = no_tf32_warn
-            
-            # Store original function if it exists
-            if hasattr(pyannote_reproducibility, 'reproducible'):
-                original_reproducible = pyannote_reproducibility.reproducible
-                
-                # Create a patched version that doesn't disable TF32
-                def patched_reproducible(func):
-                    """Patched reproducible decorator that preserves TF32"""
-                    # Call original to get the wrapped function
-                    wrapped = original_reproducible(func)
-                    
-                    # Create a wrapper that re-enables TF32 after calling
-                    def tf32_preserving_wrapper(*args, **kwargs):
-                        # Ensure TF32 is enabled before call
-                        if torch.cuda.is_available():
-                            torch.backends.cuda.matmul.allow_tf32 = True
-                            torch.backends.cudnn.allow_tf32 = True
-                        # Call the wrapped function
-                        result = wrapped(*args, **kwargs)
-                        # Re-enable TF32 after call (in case it was disabled)
-                        if torch.cuda.is_available():
-                            torch.backends.cuda.matmul.allow_tf32 = True
-                            torch.backends.cudnn.allow_tf32 = True
-                        return result
-                    
-                    return tf32_preserving_wrapper
-                
-                # Replace the reproducible function
-                pyannote_reproducibility.reproducible = patched_reproducible
-                
-            # Also try to patch the actual disable function if it exists
-            # This is the function that actually disables TF32 and emits the warning
-            import inspect
-            for name, obj in inspect.getmembers(pyannote_reproducibility):
-                if 'disable' in name.lower() and 'tf32' in name.lower() and callable(obj):
-                    # Replace with no-op
-                    setattr(pyannote_reproducibility, name, lambda: None)
-        except (ImportError, AttributeError):
-            # If we can't patch it, that's okay - we'll handle it elsewhere
-            pass
-        finally:
-            # Restore original warn
-            warnings.warn = _original_warn
-            
-    except Exception as e:
-        # If patching fails, log but don't fail
-        pass
-
-# Call the patch function before importing pyannote
-_patch_pyannote_reproducibility()
+    return
 
 import numpy as np
 import base64
@@ -1235,7 +1152,26 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
             pipeline_params["clustering"] = clustering_params
             logger.info(f"📊 Using custom clustering parameters: {clustering_params}")
         
-        # For short audio, use more lenient thresholds (only if user hasn't provided custom params)
+        # If user did not provide params, set optimized defaults for ALL audio
+        if not segmentation_params:
+            segmentation_params = {
+                "threshold": 0.4,
+                "min_duration_off": 0.1,
+                "min_duration_on": 0.0,
+            }
+            pipeline_params["segmentation"] = segmentation_params
+            logger.info(f"🔧 Using default optimized segmentation params: {segmentation_params}")
+
+        if not clustering_params:
+            clustering_params = {
+                "method": "centroid",
+                "min_cluster_size": 12,
+                "threshold": 0.68,
+            }
+            pipeline_params["clustering"] = clustering_params
+            logger.info(f"🔧 Using default optimized clustering params: {clustering_params}")
+        
+        # For very short audio, apply extra-relaxed thresholds (only if defaults still in use)
         if audio_analysis.get('duration', 0) < 10 and not pipeline_params:
             logger.info("🔧 Using relaxed thresholds for short audio")
             pipeline_params = {
@@ -1354,12 +1290,14 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
                 call_params['num_speakers'] = num_speakers
                 logger.info(f"📊 Using num_speakers: {num_speakers}")
             else:
-                if min_speakers is not None:
-                    call_params['min_speakers'] = min_speakers
-                    logger.info(f"📊 Using min_speakers: {min_speakers}")
-                if max_speakers is not None:
-                    call_params['max_speakers'] = max_speakers
-                    logger.info(f"📊 Using max_speakers: {max_speakers}")
+                # Default to 1..10 if unspecified
+                if min_speakers is None:
+                    min_speakers = 1
+                if max_speakers is None:
+                    max_speakers = 10
+                call_params['min_speakers'] = min_speakers
+                call_params['max_speakers'] = max_speakers
+                logger.info(f"📊 Using min_speakers={min_speakers}, max_speakers={max_speakers}")
             
             # Merge pipeline_params (segmentation/clustering) into call_params
             if pipeline_params:
@@ -3625,31 +3563,31 @@ def find_best_speaker_for_time_segment(speaker_segments: List[Dict], segment_sta
     best_speaker = "Speaker_00"
     max_overlap = 0.0
     
-    # Optimized iteration with early exit
-    # Segments are typically sorted by start time, so we can skip segments that start after our end
+    # Prefer midpoint containment to resolve boundary ties robustly
+    word_midpoint = (float(segment_start) + float(segment_end)) / 2.0
     for speaker_seg in speaker_segments:
         spk_start = speaker_seg.get('start', speaker_seg.get('start_time', 0))
         spk_end = speaker_seg.get('end', speaker_seg.get('end_time', 0))
-        
-        # Early exit optimization 1: if segment starts after our end, no more can overlap (if sorted)
+        if spk_start <= word_midpoint < spk_end:
+            return speaker_seg.get('speaker', best_speaker)
+    
+    # Fallback to max-overlap if no containing segment found
+    # Optimized iteration with early exit
+    for speaker_seg in speaker_segments:
+        spk_start = speaker_seg.get('start', speaker_seg.get('start_time', 0))
+        spk_end = speaker_seg.get('end', speaker_seg.get('end_time', 0))
         if spk_start > segment_end:
             break
-        
-        # Early exit optimization 2: if segment ends before our start, skip it
         if spk_end < segment_start:
             continue
-        
-        # Calculate overlap for segments that could overlap
         overlap_start = max(segment_start, spk_start)
         overlap_end = min(segment_end, spk_end)
-        overlap = max(0, overlap_end - overlap_start)
-        
+        overlap = max(0.0, overlap_end - overlap_start)
         if overlap > max_overlap:
             max_overlap = overlap
-            best_speaker = speaker_seg.get('speaker', 'Speaker_00')
+            best_speaker = speaker_seg.get('speaker', best_speaker)
     
-    # Only return speaker if there's meaningful overlap (at least 10ms)
-    return best_speaker if max_overlap > 0.01 else "Speaker_00"
+    return best_speaker
 
 def find_optimal_split_point(target_sample: int, silence_boundaries: List[int], 
                            sample_rate: int, chunk_duration: int) -> int:
