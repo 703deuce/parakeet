@@ -2224,7 +2224,7 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
             result = fill_transcript_gaps_with_parakeet(
                 transcription_result=result,
                 audio_path=mono_audio_path,
-                min_gap_seconds=0.25,  # Ultra-aggressive gap detection
+                min_gap_seconds=0.2,  # More aggressive gap detection
                 gap_padding_seconds=1.0  # More context for better accuracy
             )
         
@@ -2254,7 +2254,7 @@ def transcribe_audio_file_direct(audio_path: str, include_timestamps: bool = Fal
 def fill_transcript_gaps_with_parakeet(
     transcription_result: dict,
     audio_path: str,
-    min_gap_seconds: float = 0.25,
+    min_gap_seconds: float = 0.2,
     gap_padding_seconds: float = 1.0
 ) -> dict:
     """
