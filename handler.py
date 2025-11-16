@@ -2251,12 +2251,14 @@ def fill_transcript_gaps_with_parakeet(
     transcription_result: dict,
     audio_path: str,
     min_gap_seconds: float = 0.5,
-    gap_padding_seconds: float = 0.75,
-    diarization_segments: Optional[List[Dict[str, Any]]] = None
+    gap_padding_seconds: float = 0.75
 ) -> dict:
     """
     Detect gaps in transcription timestamps and re-transcribe using Parakeet.
     Enhanced with RMS energy check to skip true silence.
+    
+    Simple approach: Find gaps between consecutive Parakeet words.
+    If word ends at 43s and next word starts at 59s → gap from 43-59s (16 seconds).
     
     ULTRA-AGGRESSIVE MODE: 0.5 second minimum gap detection for maximum coverage
     
@@ -2264,7 +2266,7 @@ def fill_transcript_gaps_with_parakeet(
         transcription_result: Original Parakeet output with timestamps
         audio_path: Path to original audio file
         min_gap_seconds: Minimum gap size to attempt filling (default 0.5s - ULTRA AGGRESSIVE)
-        gap_padding_seconds: Extra audio to include before/after gap (default 0.75s)
+        gap_padding_seconds: Extra audio to include before/after gap (default 0.75s) - NOT USED (kept for compatibility)
     
     Returns:
         Updated transcription result with filled gaps
@@ -2275,80 +2277,44 @@ def fill_transcript_gaps_with_parakeet(
         import tempfile
         
         timestamps = transcription_result.get('word_timestamps', [])
-        if not timestamps:
+        if not timestamps or len(timestamps) < 2:
             logger.info("✅ No timestamps to check for gaps")
             return transcription_result
         
-        # Helper to find index where new words should be inserted
-        def find_insert_after_index(word_list: List[Dict[str, Any]], target_start: float) -> int:
-            insert_idx = -1
-            for idx, word in enumerate(word_list):
-                w_start = word.get('start', word.get('start_time', 0))
-                if w_start < target_start:
-                    insert_idx = idx
-                else:
-                    break
-            return insert_idx
+        # Step 1: Find all gaps between consecutive words
+        # Sort words by start time to ensure correct order
+        sorted_words = sorted(timestamps, key=lambda w: w.get('start', w.get('start_time', 0)))
         
-        # Step 1: Find all significant gaps
-        gaps: List[Dict[str, Any]] = []
-        gap_keys: set = set()
-        
-        def add_gap(start: float, end: float, insert_after_index: int):
-            duration = end - start
-            if duration < min_gap_seconds:
-                return
-            key = (round(start, 3), round(end, 3))
-            if key in gap_keys:
-                return
-            gap_keys.add(key)
-            gaps.append({
-                'start': start,
-                'end': end,
-                'duration': duration,
-                'insert_after_index': insert_after_index
-            })
-        
-        # Word-level gap detection (existing logic)
-        if len(timestamps) >= 2:
-            for i in range(len(timestamps) - 1):
-                current_word = timestamps[i]
-                next_word = timestamps[i + 1]
-                
-                current_end = current_word.get('end', current_word.get('end_time', 0))
-                next_start = next_word.get('start', next_word.get('start_time', 0))
-                gap_duration = next_start - current_end
-                
-                if gap_duration >= min_gap_seconds:
-                    add_gap(current_end, next_start, i)
-        
-        # Diarization-informed gap detection (captures entire missed speech segments)
-        if diarization_segments:
-            logger.info(f"🧠 Using {len(diarization_segments)} diarization segments to detect missed speech...")
-            for seg in diarization_segments:
-                seg_start = seg.get('start_time', seg.get('start', None))
-                seg_end = seg.get('end_time', seg.get('end', None))
-                if seg_start is None or seg_end is None:
-                    continue
-                duration = seg_end - seg_start
-                if duration < min_gap_seconds:
-                    continue
-                
-                # Check if any word overlaps with this diarization segment
-                has_overlap = False
-                for word in timestamps:
-                    w_start = word.get('start', word.get('start_time', 0))
-                    w_end = word.get('end', word.get('end_time', 0))
-                    if not (w_end <= seg_start or w_start >= seg_end):
-                        has_overlap = True
+        gaps = []
+        for i in range(len(sorted_words) - 1):
+            current_word = sorted_words[i]
+            next_word = sorted_words[i + 1]
+            
+            current_end = current_word.get('end', current_word.get('end_time', 0))
+            next_start = next_word.get('start', next_word.get('start_time', 0))
+            
+            gap_duration = next_start - current_end
+            
+            if gap_duration >= min_gap_seconds:
+                # Find the index in the original timestamps array where this gap should be inserted
+                # We need to find where current_word appears in the original array
+                insert_after_index = -1
+                for idx, word in enumerate(timestamps):
+                    if (word.get('start', word.get('start_time', 0)) == current_word.get('start', current_word.get('start_time', 0)) and
+                        word.get('end', word.get('end_time', 0)) == current_word.get('end', current_word.get('end_time', 0))):
+                        insert_after_index = idx
                         break
                 
-                if not has_overlap:
-                    insert_idx = find_insert_after_index(timestamps, seg_start)
-                    add_gap(seg_start, seg_end, insert_idx)
+                if insert_after_index >= 0:
+                    gaps.append({
+                        'start': current_end,
+                        'end': next_start,
+                        'duration': gap_duration,
+                        'insert_after_index': insert_after_index
+                    })
         
         if not gaps:
-            logger.info(f"✅ No significant gaps found (>{min_gap_seconds}s), including diarization comparison")
+            logger.info(f"✅ No significant gaps found (>{min_gap_seconds}s)")
             return transcription_result
         
         gap_durations = [f"{g['duration']:.1f}s" for g in gaps]
@@ -2747,17 +2713,7 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
             # Step 4: Match timestamps to assign speakers (word-level only)
             logger.info("  Step 3: Matching timestamps for speaker assignment (word-level)")
             
-            # Run diarization-informed gap filling now that we have speaker segments
-            try:
-                transcription_result = fill_transcript_gaps_with_parakeet(
-                    transcription_result=transcription_result,
-                    audio_path=audio_path,
-                    min_gap_seconds=0.5,
-                    gap_padding_seconds=0.75,
-                    diarization_segments=diarized_segments
-                )
-            except Exception as gap_fill_error:
-                logger.warning(f"⚠️ Diarization-informed gap filling failed: {gap_fill_error}")
+            # Gap filling already happened during transcription, but ensure word_timestamps is up to date
             
             word_timestamps = transcription_result.get('word_timestamps', [])
             diarized_results = []
@@ -4458,17 +4414,8 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         # Use the full diarization results directly (no need for speaker merging across chunks)
         merged_segments = full_diarization_results
         
-        # Re-run gap filling using diarization segments to catch missed speech regions
-        try:
-            transcription_result = fill_transcript_gaps_with_parakeet(
-                transcription_result=transcription_result,
-                audio_path=audio_file_path,
-                min_gap_seconds=0.5,
-                gap_padding_seconds=0.75,
-                diarization_segments=merged_segments
-            )
-        except Exception as gap_fill_error:
-            logger.warning(f"⚠️ Diarization-informed gap filling failed: {gap_fill_error}")
+        # Gap filling already happened during transcription in transcribe_long_audio
+        # No need to re-run here
         
         # Match timestamps to assign speakers using merged segments
         logger.info("🔗 Matching timestamps for speaker assignment...")
