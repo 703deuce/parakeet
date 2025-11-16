@@ -83,6 +83,7 @@ def _patch_pyannote_reproducibility():
                 if 'disable' in name.lower() and 'tf32' in name.lower() and callable(obj):
                     # Replace with no-op
                     setattr(pyannote_reproducibility, name, lambda: None)
+                    logger.info(f"🔒 Patched pyannote function: {attr_name}")
         except (ImportError, AttributeError):
             # If we can't patch it, that's okay - we'll handle it elsewhere
             pass
@@ -1222,7 +1223,18 @@ def perform_speaker_diarization(audio_path: str, num_speakers: int = None,
         if audio_analysis.get('is_too_short', False):
             logger.warning("⚠️ Audio is very short (<2s) - diarization may be unreliable")
         
-        # Build diarization parameters from user-provided settings
+        # Configure pipeline internals BEFORE running
+        try:
+            if segmentation_params or clustering_params:
+                logger.info("🎯 Applying custom quality settings to pyannote...")
+                configure_diarization_for_quality(segmentation_params, clustering_params)
+            else:
+                logger.info("🎯 Applying optimal default settings to pyannote...")
+                configure_diarization_for_quality()
+        except Exception as cfg_err:
+            logger.warning(f"⚠️ Could not configure diarization pipeline: {cfg_err}")
+
+        # Build diarization parameters from user-provided settings (kept for logging)
         pipeline_params = {}
         
         # Add user-provided segmentation parameters
@@ -5005,15 +5017,25 @@ def handler(job):
                 
                 # Load diarization model if needed
                 if use_diarization and hf_token and diarization_model is None:
-                    logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
+                    logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version})...")
                     if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                         error_payload = {"error": "Failed to load diarization model with provided HF token"}
                         return finalize_error(job, error_payload)
                 elif use_diarization and diarization_model is None:
-                    logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
-                    if not load_diarization_model(pyannote_version=pyannote_version):
-                        error_payload = {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                    logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version})...")
+                    if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
+                        error_payload = {"error": "Failed to load diarization model with provided HF token"}
                         return finalize_error(job, error_payload)
+                # Configure pyannote for quality immediately after loading
+                try:
+                    if segmentation_params or clustering_params:
+                        logger.info("🎯 Configuring pyannote with user-provided params...")
+                        configure_diarization_for_quality(segmentation_params, clustering_params)
+                    else:
+                        logger.info("🎯 Configuring pyannote with optimal defaults...")
+                        configure_diarization_for_quality()
+                except Exception as cfg_err:
+                    logger.warning(f"⚠️ Diarization configuration warning: {cfg_err}")
                 
                 # Process the audio file directly
                 if use_diarization:
@@ -5091,14 +5113,14 @@ def handler(job):
             
             # Load diarization model if needed
             if use_diarization and hf_token and diarization_model is None:
-                logger.info(f"Diarization requested with HF token - loading pyannote model (version {pyannote_version})...")
+                logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version})...")
                 if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
                     error_payload = {"error": "Failed to load diarization model with provided HF token"}
                     return finalize_error(job, error_payload)
             elif use_diarization and diarization_model is None:
-                logger.info(f"Diarization requested - attempting to load pyannote model (version {pyannote_version}) without token...")
-                if not load_diarization_model(pyannote_version=pyannote_version):
-                    error_payload = {"error": "Failed to load diarization model. You may need to provide a HuggingFace token (hf_token parameter)"}
+                logger.info(f"🎤 Loading pyannote diarization model (version {pyannote_version})...")
+                if not load_diarization_model(hf_token, pyannote_version=pyannote_version):
+                    error_payload = {"error": "Failed to load diarization model with provided HF token"}
                     return finalize_error(job, error_payload)
             
             temp_files_to_cleanup = [temp_audio_file.name]
@@ -5155,3 +5177,91 @@ if __name__ == "__main__":
     else:
         logger.error("Failed to load Parakeet model. Exiting.")
         exit(1)
+
+def configure_diarization_for_quality(
+    segmentation_params: Dict[str, Any] = None,
+    clustering_params: Dict[str, Any] = None,
+):
+    """
+    Configure pyannote 3.1 pipeline for maximum quality.
+    MUST be called AFTER load_diarization_model() but BEFORE perform_speaker_diarization().
+    """
+    global diarization_model
+
+    if diarization_model is None:
+        logger.warning("⚠️ Diarization model not loaded - cannot configure")
+        return False
+
+    try:
+        logger.info("🎯 Configuring pyannote for maximum quality...")
+
+        # Optimal defaults (pyannote 3.1)
+        if segmentation_params is None:
+            segmentation_params = {
+                'threshold': 0.4442,
+                'min_duration_off': 0.0,
+                'min_duration_on': 0.0,
+            }
+            logger.info(f"📊 Using optimal segmentation params: {segmentation_params}")
+
+        if clustering_params is None:
+            clustering_params = {
+                'method': 'centroid',
+                'min_cluster_size': 15,
+                'threshold': 0.7153,
+            }
+            logger.info(f"📊 Using optimal clustering params: {clustering_params}")
+
+        # Configure segmentation
+        try:
+            if hasattr(diarization_model, '_segmentation') and diarization_model._segmentation:
+                seg = diarization_model._segmentation
+                logger.info(f"📊 Found segmentation model: {type(seg).__name__}")
+                for param, value in segmentation_params.items():
+                    try:
+                        if hasattr(seg, f'_{param}'):
+                            setattr(seg, f'_{param}', value)
+                            logger.info(f"✅ Set segmentation._{param} = {value}")
+                        elif hasattr(seg, param):
+                            setattr(seg, param, value)
+                            logger.info(f"✅ Set segmentation.{param} = {value}")
+                        else:
+                            logger.warning(f"⚠️ Segmentation param '{param}' not found")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not set segmentation.{param}: {e}")
+            else:
+                logger.warning("⚠️ No _segmentation attribute found on diarization model")
+        except Exception as seg_err:
+            logger.warning(f"⚠️ Segmentation configuration error: {seg_err}")
+
+        # Configure clustering (pyannote may expose as 'klustering')
+        try:
+            clust = None
+            if hasattr(diarization_model, 'klustering') and diarization_model.klustering:
+                clust = diarization_model.klustering
+            elif hasattr(diarization_model, '_clustering'):
+                clust = diarization_model._clustering
+            if clust is not None:
+                logger.info(f"📊 Found clustering model: {type(clust).__name__}")
+                for param, value in clustering_params.items():
+                    try:
+                        if hasattr(clust, param):
+                            setattr(clust, param, value)
+                            logger.info(f"✅ Set clustering.{param} = {value}")
+                        else:
+                            logger.warning(f"⚠️ Clustering param '{param}' not found")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not set clustering.{param}: {e}")
+            else:
+                logger.warning("⚠️ No clustering attribute found on diarization model")
+        except Exception as clu_err:
+            logger.warning(f"⚠️ Clustering configuration error: {clu_err}")
+
+        logger.info("✅ Pyannote configured for maximum quality")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Failed to configure pyannote for quality: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
