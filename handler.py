@@ -2722,7 +2722,9 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
                 logger.info(f"    Found {len(diarized_segments)} speaker segments and {len(word_timestamps)} words")
                 logger.info(f"    🎯 Assigning speakers to {len(word_timestamps)} words (includes gap-filled)")
                 
-                # Assign speaker to each word based on overlap with diarization segments
+                # ✅ Assign speaker to each word based on overlap with diarization segments
+                # Words that fall within each pyannote speaker time frame get assigned that speaker
+                logger.info(f"    📊 Mapping {len(word_timestamps)} words to {len(diarized_segments)} pyannote speaker segments...")
                 for word in word_timestamps:
                     word_start = word.get('start', word.get('start_time', 0))
                     word_end = word.get('end', word.get('end_time', 0))
@@ -2743,9 +2745,11 @@ def process_firebase_audio(firebase_url: str, use_diarization: bool = True, incl
                         
                     word['speaker'] = assigned_speaker
                 
-                logger.info(f"    ✅ Assigned speakers to all {len(word_timestamps)} words")
+                logger.info(f"    ✅ Assigned speakers to all {len(word_timestamps)} words (including gap-filled words)")
                 
-                # Build diarized segments by grouping consecutive words with same speaker
+                # ✅ Build diarized segments by grouping consecutive words with same speaker IN ORDER
+                # Example: SPEAKER_00 (30-56s) gets all words in that time frame, grouped in order
+                # Words are already sorted by timestamp, so we just group consecutive words with same speaker
                 current_segment = None
                 for word in word_timestamps:
                     word_text = word.get('word', word.get('text', '')).strip()
@@ -3062,138 +3066,118 @@ def process_downloaded_audio(audio_file_path: str, include_timestamps: bool, use
             # Match timestamps to assign speakers
             logger.info("🔗 Matching timestamps for speaker assignment...")
             
-            if diarized_segments and transcription_result.get('text'):
-                # Use segment-level timestamps for matching (much better than word-level)
-                segment_timestamps = transcription_result.get('segment_timestamps', [])
+            # ✅ Use ONLY word-level timestamps for speaker assignment (not segment-level)
+            word_timestamps = transcription_result.get('word_timestamps', [])
+            
+            if diarized_segments and word_timestamps:
+                logger.info(f"    Found {len(diarized_segments)} speaker segments and {len(word_timestamps)} words")
+                logger.info(f"    🎯 Assigning speakers to {len(word_timestamps)} words (includes gap-filled)")
                 
+                # ✅ Assign speaker to each word based on overlap with diarization segments
+                # Words that fall within each pyannote speaker time frame get assigned that speaker
+                logger.info(f"    📊 Mapping {len(word_timestamps)} words to {len(diarized_segments)} pyannote speaker segments...")
+                for word in word_timestamps:
+                    word_start = word.get('start', word.get('start_time', 0))
+                    word_end = word.get('end', word.get('end_time', 0))
+                    assigned_speaker = "UNKNOWN"
+                    max_overlap = 0.0
+
+                    for spk_seg in diarized_segments:
+                        spk_start = spk_seg['start']
+                        spk_end = spk_seg['end']
+
+                        overlap_start = max(word_start, spk_start)
+                        overlap_end = min(word_end, spk_end)
+                        overlap = max(0.0, overlap_end - overlap_start)
+
+                        if overlap > max_overlap:
+                            max_overlap = overlap
+                            assigned_speaker = spk_seg['speaker']
+                        
+                    word['speaker'] = assigned_speaker
+                
+                logger.info(f"    ✅ Assigned speakers to all {len(word_timestamps)} words (including gap-filled words)")
+                
+                # ✅ Build diarized segments by grouping consecutive words with same speaker IN ORDER
+                # Example: SPEAKER_00 (30-56s) gets all words in that time frame, grouped in order
+                # Words are already sorted by timestamp, so we just group consecutive words with same speaker
                 diarized_results = []
+                current_segment = None
+                for word in word_timestamps:
+                    word_text = word.get('word', word.get('text', '')).strip()
+                    if not word_text:
+                        continue
+                    
+                    word_speaker = word.get('speaker', 'Speaker_00')
+                    word_start = word.get('start', word.get('start_time', 0))
+                    word_end = word.get('end', word.get('end_time', 0))
+                    
+                    if current_segment and current_segment['speaker'] == word_speaker:
+                        # Continue current speaker segment
+                        current_segment['end_time'] = word_end
+                        current_segment['text'] += ' ' + word_text
+                    else:
+                        # Start new speaker segment
+                        if current_segment:
+                            diarized_results.append(current_segment)
+                        current_segment = {
+                            'speaker': word_speaker,
+                            'start_time': word_start,
+                            'end_time': word_end,
+                            'duration': 0,  # filled below
+                            'text': word_text,
+                            'source_chunk': 1
+                        }
                 
-                if segment_timestamps:
-                    logger.info(f"📊 Using {len(segment_timestamps)} segment timestamps for speaker assignment")
-                    
-                    # Get the full transcribed text
-                    full_text = transcription_result.get('text', '')
-                    word_timestamps = transcription_result.get('word_timestamps', [])
-                    
-                    # Extract text for each segment (vectorized where possible)
-                    segments_with_text = []
-                    for segment_ts in segment_timestamps:
-                        segment_start = segment_ts['start']
-                        segment_end = segment_ts['end']
-                        
-                        # Extract text for this segment by finding words within the time range
-                        segment_text = ""
-                        if word_timestamps:
-                            # Use list comprehension for speed
-                            segment_words = [
-                                word_ts['word'] for word_ts in word_timestamps
-                                if (word_ts['start'] >= segment_start and word_ts['start'] <= segment_end) or
-                                   (word_ts['end'] >= segment_start and word_ts['end'] <= segment_end) or
-                                   (word_ts['start'] <= segment_start and word_ts['end'] >= segment_end)
-                            ]
-                            segment_text = ' '.join(segment_words)
-                        
-                        # Fallback: if no words found, use a placeholder
-                        if not segment_text.strip():
-                            segment_text = f"[Segment {segment_start:.1f}-{segment_end:.1f}s]"
-                        
-                        segments_with_text.append({
-                            'start': segment_start,
-                            'end': segment_end,
-                            'text': segment_text
-                        })
-                    
-                    # Vectorized speaker assignment (10-20x faster than nested loops)
-                    diarized_results = assign_speakers_to_segments_vectorized(
-                        segments_with_text, diarized_segments
-                    )
-                            
-                    logger.info(f"✅ Assigned speakers to {len(diarized_results)} segments")
-                    
-                    # Merge consecutive segments from the same speaker (optimized)
-                    if diarized_results:
-                        merged_results = []
-                        current_speaker = diarized_results[0]['speaker']
-                        current_texts = [diarized_results[0]['text']]
-                        current_start = diarized_results[0]['start_time']
-                        current_end = diarized_results[0]['end_time']
-                        current_overlap = diarized_results[0].get('overlap_duration', 0)
-                        
-                        for segment in diarized_results[1:]:
-                            if segment['speaker'] == current_speaker:
-                                # Same speaker - accumulate text and extend end time
-                                current_texts.append(segment['text'])
-                                current_end = segment['end_time']
-                            else:
-                                # Speaker changed - save accumulated segment
-                                merged_results.append({
-                                    'speaker': current_speaker,
-                                    'start_time': current_start,
-                                    'end_time': current_end,
-                                    'text': ' '.join(current_texts).strip(),
-                                    'overlap_duration': current_overlap
-                                })
-                                # Start new accumulation
-                                current_speaker = segment['speaker']
-                                current_texts = [segment['text']]
-                                current_start = segment['start_time']
-                                current_end = segment['end_time']
-                                current_overlap = segment.get('overlap_duration', 0)
-                        
-                        # Don't forget the last accumulated segment
-                        merged_results.append({
-                            'speaker': current_speaker,
-                            'start_time': current_start,
-                            'end_time': current_end,
-                            'text': ' '.join(current_texts).strip(),
-                            'overlap_duration': current_overlap
-                        })
-                        
-                        diarized_results = merged_results
-                        logger.info(f"🔄 Merged consecutive speakers: {len(diarized_results)} final segments")
+                if current_segment:
+                    diarized_results.append(current_segment)
                 
-                else:
-                    logger.error("❌ No segment timestamps available - Parakeet v3 should always produce segment timestamps")
-                    # Create a single segment with the full transcript as fallback
-                    first_speaker = diarized_segments[0]['speaker'] if diarized_segments else 'UNKNOWN'
-                    diarized_results.append({
-                        'speaker': first_speaker,
-                        'start_time': 0,
-                        'end_time': total_duration,
-                        'text': transcription_result.get('text', ''),
-                        'overlap_duration': total_duration,
-                        'fallback_reason': 'no_segment_timestamps'
-                    })
+                # Update durations
+                for seg in diarized_results:
+                    seg['duration'] = max(0, seg['end_time'] - seg['start_time'])
                 
-                # Format diarized output
-                final_result = {
-                    'diarized_transcript': diarized_results,
+                logger.info(f"    ✅ Built {len(diarized_results)} speaker segments from {len(word_timestamps)} words")
+            
+            elif diarized_segments:
+                logger.warning("    ❌ Missing word timestamps - cannot assign speakers to words")
+                first_speaker = (diarized_segments[0]['speaker']
+                                 if diarized_segments else 'UNKNOWN')
+                diarized_results = [{
+                    'speaker': first_speaker,
+                    'start_time': 0,
+                    'end_time': total_duration,
+                    'duration': total_duration,
+                    'text': transcription_result.get('text', transcription_result.get('transcript', '')),
                     'word_timestamps': transcription_result.get('word_timestamps', []),
                     'segment_timestamps': transcription_result.get('segment_timestamps', []),
-                    'char_timestamps': transcription_result.get('char_timestamps', []),
-                    'transcript': transcription_result.get('text', ''),
-                    'audio_duration_seconds': total_duration,
-                    'chunks_processed': 1,  # Single file processing
-                    'segments_processed': len(diarized_results),
-                    'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
-                    'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
-                    'diarization_model': 'pyannote/speaker-diarization-3.1',
-                    'processing_method': 'firebase_url_diarization',
-                    'chunking_method': 'none_direct_download',
-                    'long_audio_optimization': 'local_attention_enabled'
-                }
-                
-                # Also provide merged text for convenience
-                merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
-                final_result['merged_text'] = merged_text
-                
-                logger.info(f"🎉 Diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
-                return final_result
-                
-            else:
-                # Fallback: transcribe normally if diarization failed
-                logger.warning("Diarization failed, falling back to transcription only")
-                return process_downloaded_audio_transcription_only(audio_file_path, include_timestamps, total_duration)
+                    'source_chunk': 1,
+                    'fallback_reason': 'missing_word_level_data'
+                }]
+            
+            # Format diarized output
+            final_result = {
+                'diarized_transcript': diarized_results,
+                'word_timestamps': transcription_result.get('word_timestamps', []),
+                'segment_timestamps': transcription_result.get('segment_timestamps', []),
+                'char_timestamps': transcription_result.get('char_timestamps', []),
+                'transcript': transcription_result.get('text', transcription_result.get('transcript', '')),
+                'audio_duration_seconds': total_duration,
+                'chunks_processed': 1,  # Single file processing
+                'segments_processed': len(diarized_results),
+                'speakers_detected': len(set(seg['speaker'] for seg in diarized_results if seg['speaker'] != 'UNKNOWN')),
+                'model_used': 'nvidia/parakeet-tdt-0.6b-v3',
+                'diarization_model': 'pyannote/speaker-diarization-3.1',
+                'processing_method': 'firebase_url_diarization',
+                'chunking_method': 'none_direct_download',
+                'long_audio_optimization': 'local_attention_enabled'
+            }
+            
+            # Also provide merged text for convenience
+            merged_text = ' '.join([result['text'] for result in diarized_results if result['text']])
+            final_result['merged_text'] = merged_text
+            
+            logger.info(f"🎉 Diarization completed: {len(diarized_results)} segments, {final_result['speakers_detected']} speakers")
+            return final_result
         
         else:
             # Transcription only mode
@@ -3836,13 +3820,14 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
 
         # Rebuild transcript from merged segments to ensure consistency
         # Note: No need for fuzzy deduplication since we trimmed overlaps at source
-        if merged_result["diarized_transcript"]:
+        # ✅ FIX #1: Try word_timestamps FIRST (contains gap-filled words)
+        if merged_result["word_timestamps"]:
             merged_result["transcript"] = " ".join(
-                seg.get("text", "").strip()
-                for seg in merged_result["diarized_transcript"]
-                if seg.get("text")
+                word.get("word", "").strip()
+                for word in merged_result["word_timestamps"]
+                if word.get("word")
             ).strip()
-            logger.info(f"📝 Rebuilt transcript from {len(merged_result['diarized_transcript'])} diarized segments")
+            logger.info(f"📝 Rebuilt transcript from {len(merged_result['word_timestamps'])} word timestamps (includes gap-filled words)")
 
         elif merged_result["segment_timestamps"]:
             merged_result["transcript"] = " ".join(
@@ -3852,13 +3837,13 @@ def merge_chunk_results(chunk_results: List[Dict[str, Any]], overlap_duration: i
             ).strip()
             logger.info(f"📝 Rebuilt transcript from {len(merged_result['segment_timestamps'])} segment timestamps")
 
-        elif merged_result["word_timestamps"]:
+        elif merged_result["diarized_transcript"]:
             merged_result["transcript"] = " ".join(
-                word.get("word", "").strip()
-                for word in merged_result["word_timestamps"]
-                if word.get("word")
+                seg.get("text", "").strip()
+                for seg in merged_result["diarized_transcript"]
+                if seg.get("text")
             ).strip()
-            logger.info(f"📝 Rebuilt transcript from {len(merged_result['word_timestamps'])} word timestamps")
+            logger.info(f"📝 Rebuilt transcript from {len(merged_result['diarized_transcript'])} diarized segments")
 
         merged_result["transcript"] = merged_result["transcript"] or ""
         logger.info(
@@ -4416,28 +4401,38 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
         # Use the full diarization results directly (no need for speaker merging across chunks)
         merged_segments = full_diarization_results
         
+        # ✅ FIX #3: Clear chunk-level diarization - we'll rebuild from full-file pyannote + word timestamps
+        # Chunk-level speakers are only valid within each chunk, not across the full file
+        if 'diarized_transcript' in transcription_result:
+            logger.info(f"🧹 Clearing {len(transcription_result.get('diarized_transcript', []))} chunk-level diarized segments")
+            transcription_result['diarized_transcript'] = []
+        
         # Gap filling already happened during transcription in transcribe_long_audio
         # No need to re-run here
         
         # Match timestamps to assign speakers using merged segments
         logger.info("🔗 Matching timestamps for speaker assignment...")
         logger.info(f"🔍 DEBUG - transcription_result keys: {list(transcription_result.keys())}")
-        logger.info(f"🔍 DEBUG - transcription_result text length: {len(transcription_result.get('text', ''))}")
-        logger.info(f"🔍 DEBUG - transcription_result text preview: {transcription_result.get('text', '')[:200]}...")
+        logger.info(f"🔍 DEBUG - transcription_result transcript length: {len(transcription_result.get('transcript', ''))}")
+        logger.info(f"🔍 DEBUG - transcription_result transcript preview: {transcription_result.get('transcript', '')[:200]}...")
+        logger.info(f"🔍 DEBUG - transcription_result word_timestamps count: {len(transcription_result.get('word_timestamps', []))}")
         
-        if transcription_result.get('text'):
+        # ✅ FIX #2: Check for correct key name ('transcript' not 'text', or word_timestamps)
+        if transcription_result.get('transcript') or transcription_result.get('word_timestamps'):
             # ✨ SIMPLIFIED: Use ONLY word-level timestamps (includes gap-filled words)
             word_timestamps = transcription_result.get('word_timestamps', [])
             
             if word_timestamps and merged_segments:
                 logger.info(f"🎯 Assigning speakers to {len(word_timestamps)} words (including gap-filled)...")
                 
-                # Assign speaker to each word based on pyannote speaker segments
+                # ✅ Assign speaker to each word based on pyannote speaker segments
+                # Words that fall within each pyannote speaker time frame get assigned that speaker
+                logger.info(f"📊 Mapping {len(word_timestamps)} words to {len(merged_segments)} pyannote speaker segments...")
                 for word in word_timestamps:
                     word_start = word.get('start', word.get('start_time', 0))
                     word_end = word.get('end', word.get('end_time', 0))
                     
-                    # Find best matching speaker for this word's time range
+                    # Find best matching speaker for this word's time range (based on time overlap)
                     best_speaker = find_best_speaker_for_time_segment(
                         merged_segments,
                         word_start,
@@ -4446,7 +4441,7 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     
                     word['speaker'] = best_speaker if best_speaker else "Speaker_00"
                 
-                logger.info(f"✅ Assigned speakers to all {len(word_timestamps)} words")
+                logger.info(f"✅ Assigned speakers to all {len(word_timestamps)} words (including gap-filled words)")
                 
                 logger.info(
                     "🧮 Word timestamps entering diarized grouping: %d (merged segments: %d)",
@@ -4454,7 +4449,9 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     len(merged_segments)
                 )
                 
-                # Build diarized_results from words (group consecutive words by speaker)
+                # ✅ Build diarized_results from words (group consecutive words by speaker IN ORDER)
+                # Example: SPEAKER_00 (30-56s) gets all words in that time frame, grouped in order
+                # Words are already sorted by timestamp, so we just group consecutive words with same speaker
                 diarized_results = []
                 current_speaker_segment = None
                 
@@ -4535,64 +4532,11 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
             return result
 
         else:
-            logger.warning(f"⚠️ No transcription text in main field, checking segment_timestamps and word_timestamps...")
+            logger.warning(f"⚠️ No transcription text in main field, checking word_timestamps...")
             
-            # FALLBACK 1: Try segment-level timestamps first (preferred)
-            segment_timestamps = transcription_result.get('segment_timestamps', [])
-            if segment_timestamps:
-                logger.info(f"✅ Found {len(segment_timestamps)} segment timestamps - using as fallback")
-                
-                # Create segments from segment-level timestamps
-                diarized_results = []
-                for segment in segment_timestamps:
-                    segment_start = segment.get('start', segment.get('start_time', 0))
-                    segment_end = segment.get('end', segment.get('end_time', 0))
-                    segment_text = segment.get('text', '')
-                    
-                    # Find the best matching speaker for this segment
-                    best_speaker = find_best_speaker_for_time_segment(
-                        merged_segments, segment_start, segment_end
-                    ) if merged_segments else "Speaker_00"
-                    
-                    diarized_results.append({
-                        "speaker": best_speaker,
-                        "start_time": segment_start,
-                        "end_time": segment_end,
-                        "text": segment_text,
-                        "segment_level_fallback": True
-                    })
-                
-                # Assemble full text from segments
-                full_text = ' '.join([seg.get('text', '') for seg in segment_timestamps])
-                
-                # Create formatted transcript for readability
-                formatted_transcript = create_formatted_transcript(diarized_results)
-                
-                result = {
-                    "transcript": full_text,
-                    "formatted_transcript": formatted_transcript,
-                    "diarized_transcript": diarized_results,
-                    "word_timestamps": transcription_result.get('word_timestamps', []),
-                    "segment_timestamps": segment_timestamps,
-                    "char_timestamps": transcription_result.get('char_timestamps', []),
-                    "metadata": {
-                        **transcription_result.get('metadata', {}),
-                        "total_duration": total_duration,
-                        "speaker_count": len(set(seg["speaker"] for seg in diarized_results)),
-                        "word_count": len(full_text.split()),
-                        "diarized_segments": len(diarized_results),
-                        "processing_method": "chunked_with_segment_level_fallback",
-                        "fallback_reason": "empty_transcript_but_had_segments"
-                    },
-                    "workflow": "chunked_transcription_with_segment_level_fallback"
-                }
-                
-                logger.info(f"✅ Segment-level fallback completed: {len(segment_timestamps)} segments, {len(set(seg['speaker'] for seg in diarized_results))} speakers")
-                return result
-
-            # FALLBACK 2: Use word-level timestamps if segment-level not available
-        word_timestamps = transcription_result.get('word_timestamps', [])
-        if word_timestamps:
+            # ✅ FALLBACK: Use word-level timestamps ONLY (no segment-level fallback)
+            word_timestamps = transcription_result.get('word_timestamps', [])
+            if word_timestamps:
                 logger.info(f"✅ Found {len(word_timestamps)} word timestamps - using as fallback")
                 
                 # Create segments from word-level timestamps
@@ -4646,10 +4590,10 @@ def process_long_audio_with_chunking(audio_file_path: str, include_timestamps: b
                     len(set(seg['speaker'] for seg in diarized_results))
                 )
                 return result
-
-        else:
-            logger.error(f"❌ No segment OR word timestamps available. Transcription result keys: {list(transcription_result.keys())}")
-            return {"error": "No transcription text, segment timestamps, or word timestamps available for speaker assignment"}
+            
+            else:
+                logger.error(f"❌ No word timestamps available. Transcription result keys: {list(transcription_result.keys())}")
+                return {"error": "No transcription text or word timestamps available for speaker assignment"}
             
     except Exception as e:
         logger.error(f"❌ Chunked processing failed: {str(e)}")
